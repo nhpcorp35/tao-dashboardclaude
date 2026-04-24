@@ -468,6 +468,15 @@ function startCountdown() {
 
 // ── Main load ────────────────────────────────────────────────────────────────
 
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function loadSubnetData(netuid, i) {
+  // Stagger by 300ms per subnet to avoid 429s from TaoStats
+  await sleep(i * 300);
+  await Promise.all([loadPool(netuid), loadYield(netuid), loadFlow(netuid)]);
+  render(); // re-render as each subnet comes in
+}
+
 async function loadAll() {
   document.getElementById('status-bar').innerHTML = 'Fetching data...';
   document.getElementById('next-refresh').textContent = '';
@@ -478,12 +487,9 @@ async function loadAll() {
     render();
 
     const netuids = walletPositions.map(p => p.netuid);
-    await Promise.all([
-      ...netuids.map(loadPool),
-      ...netuids.map(loadYield),
-      ...netuids.map(loadFlow),
-    ]);
-    render();
+    // Load subnets sequentially with stagger — avoids TaoStats 429 rate limits
+    await Promise.all(netuids.map((netuid, i) => loadSubnetData(netuid, i)));
+
     document.getElementById('status-bar').innerHTML = 'Live data · <span>taostats.io</span>';
   } catch(e) {
     document.getElementById('status-bar').innerHTML = `Error: ${e.message}`;
