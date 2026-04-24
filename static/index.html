@@ -317,14 +317,16 @@ async function loadPool(netuid) {
     const res = await fetch(`/api/subnet/${netuid}`);
     const json = await res.json();
     if (!json.error) {
-      // Warn in console if all meaningful fields are null (helps diagnose grey dots)
       if (json.price == null && json.change_7d == null && json.emission_pct == null) {
         console.warn(`SN${netuid} pool: all fields null. Raw API keys:`, json._raw_keys);
       }
       delete json._raw_keys;
       poolData[netuid] = json;
+      console.log(`poolData[${netuid}] stored (type=${typeof netuid}):`, json.price, json.change_7d, json.emission_pct);
+    } else {
+      console.error(`SN${netuid} pool error:`, json.error);
     }
-  } catch(e) {}
+  } catch(e) { console.error(`SN${netuid} pool fetch threw:`, e); }
 }
 
 async function loadYield(netuid) {
@@ -355,9 +357,11 @@ function render() {
   let totalTao = 0, buys = 0, holds = 0, sells = 0;
   let html = '';
 
+  console.log('render() poolData keys:', Object.keys(poolData), '| walletPosition netuids:', walletPositions.map(p => `${p.netuid}(${typeof p.netuid})`));
   walletPositions.forEach((p, idx) => {
     totalTao += p.tao_value;
     const pd = poolData[p.netuid] || {};
+    if (idx === 0) console.log(`SN${p.netuid} pd lookup:`, pd, '| poolData[p.netuid] key type check:', typeof p.netuid);
     const yd = yieldData[p.netuid] || {};
     const signals = evalSignals(p);
     const action = getAction(signals);
