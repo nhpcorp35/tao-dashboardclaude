@@ -130,9 +130,10 @@ def subnet_pool(netuid):
         d = raw.get("data", [])
         d = d[0] if isinstance(d, list) and d else (d if isinstance(d, dict) else {})
 
-        price = safe_float(first_val(d, "price", "alpha_price", "token_price"))
+        price = safe_float(first_val(d, "price", "last_price", "alpha_price", "token_price"))
 
-        # 7d change — may be decimal fraction (0.05) or already pct (5.0)
+        # price_change fields come back as full percentages (e.g. -1.53, not -0.0153)
+        # Only multiply by 100 if the value looks like a decimal fraction (abs < 2)
         change_7d = safe_float(first_val(d,
             "price_change_1_week", "price_change_7d", "change_7d",
             "token_price_change_1_week", "alpha_price_change_1_week"
@@ -147,12 +148,17 @@ def subnet_pool(netuid):
         if change_30d is not None and -2.0 < change_30d < 2.0 and change_30d != 0:
             change_30d = change_30d * 100
 
-        # Emission — taostats typically returns as fraction (0.003 = 0.3%)
-        emission = safe_float(first_val(d, "emission", "emission_share", "tao_emission"))
-        if emission is not None:
-            emission_pct = emission if emission > 1.0 else emission * 100
-        else:
-            emission_pct = None
+        # CONFIRMED from debug: pool response does NOT have an "emission" field.
+        # root_prop IS present (e.g. 0.1582) = this subnet's share of root emissions.
+        # We expose it as emission_pct (multiply by 100 to get a percentage).
+        emission = None
+        emission_pct = None
+
+        root_prop = safe_float(first_val(d, "emission", "emission_share", "tao_emission", "root_prop"))
+        if root_prop is not None:
+            # If already > 1 it was already a percentage, otherwise it's a fraction
+            emission_pct = root_prop if root_prop > 1.0 else root_prop * 100
+            emission = root_prop
 
         return jsonify({
             "netuid": netuid,
@@ -168,7 +174,11 @@ def subnet_pool(netuid):
 
 @app.route("/api/yield/<int:netuid>")
 def validator_yield(netuid):
-    """Fetch validator APY data for a subnet."""
+    """Fetch validator APY data for a subnet.
+
+    CONFIRMED from debug: seven_day_apy is returned as a FRACTION, not a percentage.
+    e.g. 0.402 = 40.2% APY. We multiply by 100 before returning.
+    """
     try:
         url = f"{TAOSTATS_BASE}/api/dtao/validator/yield/latest/v1?netuid={netuid}"
         r = requests.get(url, headers=HEADERS, timeout=10)
@@ -188,8 +198,10 @@ def validator_yield(netuid):
                 "annualized_yield_7d", "seven_day_yield", "avg_apy"
             )
             apy = safe_float(apy_raw)
-            # Convert fraction to pct if needed
-            if apy is not None and 0 < apy < 2.0:
+
+            # CONFIRMED: values like 0.402 are fractions → multiply by 100 to get 40.2%
+            # Guard: if somehow a value comes back > 5 it's already a percentage
+            if apy is not None and apy <= 5.0:
                 apy = apy * 100
 
             rank = first_val(v, "validator_rank", "rank", "position")
@@ -216,7 +228,12 @@ def validator_yield(netuid):
 
 @app.route("/api/taoflow/<int:netuid>")
 def tao_flow(netuid):
-    """Fetch TAO flow trend for a subnet."""
+    """Fetch TAO flow trend for a subnet.
+
+    CONFIRMED from debug: response only has 'tao_flow' (no EMA field).
+    tao_flow is a raw rao value (e.g. 4046653175922 = ~4046 TAO net inflow).
+    Positive = net buying pressure. We use it directly as the flow signal.
+    """
     try:
         url = f"{TAOSTATS_BASE}/api/dtao/tao_flow/v1?netuid={netuid}"
         r = requests.get(url, headers=HEADERS, timeout=10)
@@ -228,23 +245,21 @@ def tao_flow(netuid):
 
         d = data[0] if isinstance(data, list) else data
 
-        flow = safe_float(first_val(d,
+        # CONFIRMED: only 'tao_flow' exists, no EMA variant
+        flow_raw = safe_float(first_val(d,
             "tao_flow", "flow", "net_tao_in", "net_flow",
             "tao_net_flow", "net_tao_flow", "alpha_flow"
         ))
-        flow_ema = safe_float(first_val(d,
-            "tao_flow_ema", "flow_ema", "tao_in_ema", "net_flow_ema",
-            "ema_flow", "tao_flow_ma", "flow_ma"
-        ))
 
-        # Fall back to raw flow for the signal if EMA not available
-        if flow_ema is None:
-            flow_ema = flow
+        # Convert from rao to TAO for readability in tooltips
+        flow_tao = flow_raw / 1_000_000_000 if flow_raw is not None else None
 
+        # No EMA available — use raw flow as the signal value
+        # flow_ema is what the frontend checks for sign (positive = green)
         return jsonify({
             "netuid": netuid,
-            "flow": flow,
-            "flow_ema": flow_ema,
+            "flow": flow_tao,
+            "flow_ema": flow_tao,  # fallback: raw flow used as signal
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
