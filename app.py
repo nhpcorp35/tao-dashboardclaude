@@ -195,19 +195,32 @@ def subnet_pool(netuid):
 @app.route("/api/yield/<int:netuid>")
 def validator_yield(netuid):
     try:
-        url = f"{TAOSTATS_BASE}/api/dtao/validator/yield/latest/v1?netuid={netuid}"
-        r = requests.get(url, headers=HEADERS, timeout=10)
-        r.raise_for_status()
-        raw = r.json()
+        # Fetch all yield pages — some subnets have 50+ validators across multiple pages
+        data = []
+        page = 1
+        while True:
+            url = f"{TAOSTATS_BASE}/api/dtao/validator/yield/latest/v1?netuid={netuid}&page={page}&limit=50"
+            r = requests.get(url, headers=HEADERS, timeout=10)
+            r.raise_for_status()
+            raw = r.json()
 
-        data = raw.get("data", raw)
-        if isinstance(data, dict) and "results" in data:
-            data = data["results"]
-        if not isinstance(data, list):
-            data = [data] if isinstance(data, dict) and data else []
+            page_data = raw.get("data", raw)
+            if isinstance(page_data, dict) and "results" in page_data:
+                page_data = page_data["results"]
+            if not isinstance(page_data, list):
+                page_data = [page_data] if isinstance(page_data, dict) and page_data else []
+
+            data.extend(page_data)
+
+            pagination = raw.get("pagination", {})
+            if pagination.get("next_page") is None:
+                break
+            if page >= 5:  # safety cap (~250 validators)
+                break
+            page += 1
 
         if not data:
-            app.logger.info("yield netuid=%s: empty data, raw keys=%s", netuid, list(raw.keys()))
+            app.logger.info("yield netuid=%s: empty data", netuid)
             return jsonify({"netuid": netuid, "seven_day_apy": None, "validators": []})
 
         validators = []
