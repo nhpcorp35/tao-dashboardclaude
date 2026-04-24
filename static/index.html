@@ -316,7 +316,14 @@ async function loadPool(netuid) {
   try {
     const res = await fetch(`/api/subnet/${netuid}`);
     const json = await res.json();
-    if (!json.error) poolData[netuid] = json;
+    if (!json.error) {
+      // Warn in console if all meaningful fields are null (helps diagnose grey dots)
+      if (json.price == null && json.change_7d == null && json.emission_pct == null) {
+        console.warn(`SN${netuid} pool: all fields null. Raw API keys:`, json._raw_keys);
+      }
+      delete json._raw_keys;
+      poolData[netuid] = json;
+    }
   } catch(e) {}
 }
 

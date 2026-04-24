@@ -40,19 +40,28 @@ def debug_subnet(netuid):
     try:
         url = f"{TAOSTATS_BASE}/api/dtao/pool/latest/v1?netuid={netuid}"
         r = requests.get(url, headers=HEADERS, timeout=10)
-        results["pool"] = {"status": r.status_code, "body": r.json()}
+        body = r.json()
+        d = body.get("data", body)
+        if isinstance(d, list): d = d[0] if d else {}
+        results["pool"] = {"status": r.status_code, "body": body, "top_level_keys": list(d.keys())}
     except Exception as e:
         results["pool"] = {"error": str(e)}
     try:
         url = f"{TAOSTATS_BASE}/api/dtao/validator/yield/latest/v1?netuid={netuid}"
         r = requests.get(url, headers=HEADERS, timeout=10)
-        results["yield"] = {"status": r.status_code, "body": r.json()}
+        body = r.json()
+        d0 = (body.get("data") or [{}])
+        d0 = d0[0] if isinstance(d0, list) and d0 else (d0 if isinstance(d0, dict) else {})
+        results["yield"] = {"status": r.status_code, "body": body, "first_record_keys": list(d0.keys())}
     except Exception as e:
         results["yield"] = {"error": str(e)}
     try:
         url = f"{TAOSTATS_BASE}/api/dtao/tao_flow/v1?netuid={netuid}"
         r = requests.get(url, headers=HEADERS, timeout=10)
-        results["tao_flow"] = {"status": r.status_code, "body": r.json()}
+        body = r.json()
+        d0 = (body.get("data") or [{}])
+        d0 = d0[0] if isinstance(d0, list) and d0 else (d0 if isinstance(d0, dict) else {})
+        results["tao_flow"] = {"status": r.status_code, "body": body, "first_record_keys": list(d0.keys())}
     except Exception as e:
         results["tao_flow"] = {"error": str(e)}
     try:
@@ -116,30 +125,57 @@ def subnet_pool(netuid):
         r = requests.get(url, headers=HEADERS, timeout=10)
         r.raise_for_status()
         raw = r.json()
-        d = raw.get("data", [])
-        d = d[0] if isinstance(d, list) and d else (d if isinstance(d, dict) else {})
 
-        name = first_val(d, "name", "subnet_name", "title")
-        price = safe_float(first_val(d, "price", "last_price", "alpha_price", "token_price"))
+        # Robust unwrap: handle list, dict-with-data, or bare dict
+        d = raw.get("data", raw)
+        if isinstance(d, list):
+            # Filter to the exact netuid in case the API returns multiple rows
+            matches = [x for x in d if isinstance(x, dict) and str(x.get("netuid")) == str(netuid)]
+            d = matches[0] if matches else (d[0] if d else {})
+        elif not isinstance(d, dict):
+            d = {}
+
+        # Name — TaoStats may nest it under subnet.name or use various keys
+        subnet_obj = d.get("subnet") or {}
+        name = (
+            first_val(d, "name", "subnet_name", "title", "token_name", "symbol")
+            or first_val(subnet_obj, "name", "subnet_name", "title")
+        )
+
+        price = safe_float(first_val(d,
+            "price", "last_price", "alpha_price", "token_price",
+            "current_price", "alpha_token_price",
+        ))
 
         # CONFIRMED: taostats returns price changes as full percentages already (e.g. -1.53)
         # Do not multiply by 100
         change_7d = safe_float(first_val(d,
             "price_change_1_week", "price_change_7d", "change_7d",
-            "token_price_change_1_week", "alpha_price_change_1_week"
+            "token_price_change_1_week", "alpha_price_change_1_week",
+            "alpha_price_change_7d", "price_change_week",
         ))
         change_30d = safe_float(first_val(d,
             "price_change_1_month", "price_change_30d", "change_30d",
-            "price_change_4_weeks", "token_price_change_1_month", "alpha_price_change_1_month"
+            "price_change_4_weeks", "token_price_change_1_month", "alpha_price_change_1_month",
+            "alpha_price_change_30d", "price_change_month",
         ))
 
         # CONFIRMED: field is root_prop, value is a fraction (0.158 = 15.8%)
         emission = None
         emission_pct = None
-        root_prop = safe_float(first_val(d, "emission", "emission_share", "tao_emission", "root_prop"))
+        root_prop = safe_float(first_val(d,
+            "root_prop", "emission", "emission_share", "tao_emission",
+            "emission_ratio", "tao_emission_ratio",
+        ))
         if root_prop is not None:
             emission_pct = root_prop if root_prop > 1.0 else root_prop * 100
             emission = root_prop
+
+        # Log what we found so mismatches are easy to spot in server logs
+        app.logger.info(
+            "subnet %s pool keys=%s price=%s change_7d=%s emission_pct=%s",
+            netuid, list(d.keys())[:20], price, change_7d, emission_pct,
+        )
 
         return jsonify({
             "netuid": netuid,
@@ -149,6 +185,8 @@ def subnet_pool(netuid):
             "change_30d": change_30d,
             "emission": emission,
             "emission_pct": emission_pct,
+            # Pass raw keys back so the debug endpoint still works
+            "_raw_keys": list(d.keys()),
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -161,8 +199,15 @@ def validator_yield(netuid):
         r = requests.get(url, headers=HEADERS, timeout=10)
         r.raise_for_status()
         raw = r.json()
-        data = raw.get("data", [])
+
+        data = raw.get("data", raw)
+        if isinstance(data, dict) and "results" in data:
+            data = data["results"]
+        if not isinstance(data, list):
+            data = [data] if isinstance(data, dict) and data else []
+
         if not data:
+            app.logger.info("yield netuid=%s: empty data, raw keys=%s", netuid, list(raw.keys()))
             return jsonify({"netuid": netuid, "seven_day_apy": None, "validators": []})
 
         validators = []
@@ -172,7 +217,8 @@ def validator_yield(netuid):
 
             apy_raw = first_val(v,
                 "seven_day_apy", "apy_7d", "yield_7d", "apy",
-                "annualized_yield_7d", "seven_day_yield", "avg_apy"
+                "annualized_yield_7d", "seven_day_yield", "avg_apy",
+                "validator_apy", "weekly_apy", "apy_1_week",
             )
             apy = safe_float(apy_raw)
             # CONFIRMED: values are fractions (0.402 = 40.2%) — multiply by 100
@@ -207,16 +253,38 @@ def tao_flow(netuid):
         r = requests.get(url, headers=HEADERS, timeout=10)
         r.raise_for_status()
         raw = r.json()
-        data = raw.get("data", [])
-        if not data:
+
+        # Handle both {data: [...]} and bare list/dict
+        data = raw.get("data", raw)
+        if isinstance(data, list):
+            # Prefer the row matching our netuid
+            matches = [x for x in data if isinstance(x, dict) and str(x.get("netuid")) == str(netuid)]
+            d = matches[0] if matches else (data[0] if data else {})
+        elif isinstance(data, dict):
+            d = data
+        else:
+            d = {}
+
+        if not d:
+            app.logger.info("tao_flow netuid=%s: empty data, raw keys=%s", netuid, list(raw.keys()))
             return jsonify({"netuid": netuid, "flow": None, "flow_ema": None})
 
-        d = data[0] if isinstance(data, list) else data
         flow_raw = safe_float(first_val(d,
             "tao_flow", "flow", "net_tao_in", "net_flow",
-            "tao_net_flow", "net_tao_flow", "alpha_flow"
+            "tao_net_flow", "net_tao_flow", "alpha_flow",
+            "tao_in", "net_stake_flow", "stake_flow",
         ))
-        flow_tao = flow_raw / 1_000_000_000 if flow_raw is not None else None
+
+        # Some endpoints return rao (integer) and need /1e9; others return TAO directly.
+        # Heuristic: if abs value > 1_000_000 it's almost certainly rao.
+        if flow_raw is not None:
+            flow_tao = flow_raw / 1_000_000_000 if abs(flow_raw) > 1_000_000 else flow_raw
+        else:
+            flow_tao = None
+            app.logger.info(
+                "tao_flow netuid=%s: no flow field found in keys=%s", netuid, list(d.keys())
+            )
+
         return jsonify({
             "netuid": netuid,
             "flow": flow_tao,
