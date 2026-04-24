@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>TAO Subnet Dashboard</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f3; color: #1a1a1a; min-height: 100vh; padding: 2rem 1rem; }
+    .container { max-width: 1100px; margin: 0 auto; }
+    h1 { font-size: 20px; font-weight: 500; margin-bottom: 6px; }
+    .wallet-addr { font-size: 12px; color: #888; font-family: monospace; margin-bottom: 2rem; word-break: break-all; }
+    .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 2rem; }
+    .metric-card { background: #fff; border: 1px solid #e5e5e3; border-radius: 10px; padding: 16px; }
+    .metric-label { font-size: 12px; color: #888; margin-bottom: 6px; }
+    .metric-value { font-size: 24px; font-weight: 500; }
+    .metric-sub { font-size: 11px; color: #888; margin-top: 4px; }
+    .green { color: #16a34a; }
+    .red { color: #dc2626; }
+    .blue { color: #2563eb; }
+    .amber { color: #d97706; }
+    .section-label { font-size: 11px; font-weight: 500; color: #aaa; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 10px; }
+    .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
+    .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #666; }
+    .ldot { width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; }
+    .table-wrap { background: #fff; border: 1px solid #e5e5e3; border-radius: 12px; overflow-x: auto; margin-bottom: 1.5rem; }
+    table { width: 100%; border-collapse: collapse; min-width: 820px; }
+    th { font-size: 11px; font-weight: 500; color: #aaa; text-align: left; padding: 10px 12px; border-bottom: 1px solid #f0f0ee; white-space: nowrap; }
+    td { font-size: 13px; padding: 12px 12px; border-bottom: 1px solid #f5f5f3; vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #fafaf8; }
+    .buy-row td { background: #eff6ff !important; }
+    .buy-row:hover td { background: #dbeafe !important; }
+    .badge { display: inline-block; font-size: 10px; font-weight: 600; padding: 3px 9px; border-radius: 20px; white-space: nowrap; }
+    .badge-buy    { background: #dbeafe; color: #1d4ed8; }
+    .badge-ok     { background: #dcfce7; color: #15803d; }
+    .badge-warn   { background: #fef9c3; color: #a16207; }
+    .badge-danger { background: #fee2e2; color: #b91c1c; }
+    .dots { display: flex; gap: 6px; align-items: center; }
+    .dot { width: 16px; height: 16px; border-radius: 50%; flex-shrink: 0; }
+    .dot-green { background: #16a34a; }
+    .dot-red   { background: #dc2626; }
+    .dot-blue  { background: #2563eb; }
+    .footer { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+    .footer-meta { font-size: 12px; color: #aaa; }
+    .refresh-btn { font-size: 13px; padding: 7px 16px; border: 1px solid #e5e5e3; border-radius: 8px; background: #fff; color: #555; cursor: pointer; }
+    .refresh-btn:hover { background: #f5f5f3; }
+    .status-bar { font-size: 12px; color: #aaa; margin-bottom: 1.5rem; }
+    .status-bar span { color: #16a34a; }
+    .loading { color: #aaa; font-style: italic; }
+    @media (max-width: 600px) {
+      body { padding: 1rem 0.5rem; }
+      .metric-value { font-size: 20px; }
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>TAO Subnet Dashboard</h1>
+  <div class="wallet-addr" id="wallet-addr">loading...</div>
+  <div class="status-bar" id="status-bar">Fetching data...</div>
+
+  <div class="metric-grid">
+    <div class="metric-card">
+      <div class="metric-label">TAO value (staked)</div>
+      <div class="metric-value" id="m-total">—</div>
+      <div class="metric-sub">across all subnets</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Active positions</div>
+      <div class="metric-value" id="m-positions">—</div>
+      <div class="metric-sub">subnets staked</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Buy signals</div>
+      <div class="metric-value blue" id="m-buys">—</div>
+      <div class="metric-sub">entry opportunities</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Exit signals</div>
+      <div class="metric-value red" id="m-exits">—</div>
+      <div class="metric-sub">subnets flagged</div>
+    </div>
+  </div>
+
+  <div class="section-label">Signal legend</div>
+  <div class="legend">
+    <div class="legend-item"><div class="ldot" style="background:#2563eb"></div> Buy — high ROI, rising emissions, top rank</div>
+    <div class="legend-item"><div class="ldot" style="background:#16a34a"></div> Healthy — all KPIs clear</div>
+    <div class="legend-item"><div class="ldot" style="background:#dc2626"></div> Watch / Exit — KPIs flagged</div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Subnet</th>
+          <th>Alpha price (τ)</th>
+          <th>7d %</th>
+          <th>Alpha staked</th>
+          <th>TAO value</th>
+          <th>Daily ROI</th>
+          <th>Signal</th>
+          <th>KPI dots</th>
+          <th>Rank</th>
+        </tr>
+      </thead>
+      <tbody id="tbody">
+        <tr><td colspan="9" class="loading" style="padding:20px 12px">Loading your wallet positions...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="footer">
+    <div class="footer-meta" id="last-updated">—</div>
+    <button class="refresh-btn" onclick="loadAll()">Refresh data</button>
+  </div>
+</div>
+
+<script>
+const COLDKEY = '5Cexeg7deNSTzsqMKuBmvc9JHGHymuL4SdjAA9Jw4eeHUphb';
+
+let walletPositions = [];
+let poolData = {};
+
+function kpiFlags(p) {
+  const emissionPct = parseFloat(p.emission || 0) * 100;
+  return [
+    emissionPct < 0.5,
+    (p.roi || 0) < 0.1,
+    (p.subnet_rank || 0) > 60,
+  ];
+}
+
+function buyScore(p) {
+  let s = 0;
+  if ((p.roi || 0) >= 0.12) s++;
+  if (parseFloat(p.emission || 0) * 100 >= 0.5) s++;
+  if ((p.subnet_rank || 999) <= 30) s++;
+  return s;
+}
+
+function getSignal(p) {
+  const flags = kpiFlags(p);
+  const bad = flags.filter(Boolean).length;
+  const buy = buyScore(p);
+  if (buy >= 2 && bad === 0) return 'buy';
+  if (bad === 0) return 'ok';
+  if (bad === 1) return 'warn';
+  return 'danger';
+}
+
+function signalBadge(sig) {
+  const map = {
+    buy:    ['badge-buy',    'Buy signal'],
+    ok:     ['badge-ok',     'Healthy'],
+    warn:   ['badge-warn',   'Watch'],
+    danger: ['badge-danger', 'Exit signal'],
+  };
+  const [cls, label] = map[sig];
+  return `<span class="badge ${cls}">${label}</span>`;
+}
+
+function kpiDots(p) {
+  const flags = kpiFlags(p);
+  const sig = getSignal(p);
+  const titles = ['Low emission share', 'Daily ROI <0.1%', 'Rank >60'];
+  if (sig === 'buy') {
+    return '<div class="dots">' + [0,1,2].map(i =>
+      `<div class="dot dot-blue" title="${titles[i]}"></div>`).join('') + '</div>';
+  }
+  return '<div class="dots">' + flags.map((f, i) =>
+    `<div class="dot ${f ? 'dot-red' : 'dot-green'}" title="${titles[i]}"></div>`).join('') + '</div>';
+}
+
+function fmt7d(val) {
+  if (val === null || val === undefined || isNaN(val)) return '<span style="color:#ccc">—</span>';
+  const cls = val >= 0 ? 'green' : 'red';
+  return `<span class="${cls}">${val >= 0 ? '+' : ''}${parseFloat(val).toFixed(1)}%</span>`;
+}
+
+function fmtPrice(netuid) {
+  const d = poolData[netuid];
+  if (!d || !d.price) return '<span style="color:#ccc">—</span>';
+  return `τ${parseFloat(d.price).toFixed(4)}`;
+}
+
+async function loadWallet() {
+  const res = await fetch('/api/wallet');
+  const json = await res.json();
+  if (json.error) throw new Error(json.error);
+  walletPositions = json.positions.filter(p => p.tao_value > 0.0001);
+  document.getElementById('wallet-addr').textContent = json.coldkey;
+  return walletPositions;
+}
+
+async function loadPool(netuid) {
+  try {
+    const res = await fetch(`/api/subnet/${netuid}`);
+    const json = await res.json();
+    if (!json.error) poolData[netuid] = json;
+  } catch(e) {}
+}
+
+function render() {
+  const tbody = document.getElementById('tbody');
+  if (!walletPositions.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="loading" style="padding:20px 12px">No staked positions found for this wallet.</td></tr>';
+    return;
+  }
+
+  let totalTao = 0, buys = 0, exits = 0;
+
+  const rows = walletPositions.map(p => {
+    totalTao += p.tao_value;
+    const pd = poolData[p.netuid] || {};
+    const merged = { ...p, ...pd };
+    const sig = getSignal(merged);
+    if (sig === 'buy') buys++;
+    if (sig === 'danger') exits++;
+
+    const roiEst = pd.emission ? (parseFloat(pd.emission) * 100 * 0.41).toFixed(3) : null;
+    merged.roi = roiEst ? parseFloat(roiEst) : null;
+
+    const roiClass = merged.roi >= 0.12 ? 'green' : merged.roi >= 0.08 ? 'amber' : 'red';
+    const rowCls = sig === 'buy' ? 'buy-row' : '';
+
+    return `<tr class="${rowCls}">
+      <td><strong>SN${p.netuid}</strong>${p.hotkey_name ? `<br><span style="font-size:11px;color:#aaa">${p.hotkey_name}</span>` : ''}</td>
+      <td>${fmtPrice(p.netuid)}</td>
+      <td>${fmt7d(pd.change_7d)}</td>
+      <td>${p.alpha_balance.toFixed(4)}</td>
+      <td>τ${p.tao_value.toFixed(4)}</td>
+      <td>${merged.roi !== null ? `<span class="${roiClass}">${merged.roi.toFixed(3)}%</span>` : '<span style="color:#ccc">—</span>'}</td>
+      <td>${signalBadge(sig)}</td>
+      <td>${kpiDots(merged)}</td>
+      <td style="color:#aaa">${p.subnet_rank !== null ? '#' + p.subnet_rank : '—'}</td>
+    </tr>`;
+  }).join('');
+
+  tbody.innerHTML = rows;
+
+  document.getElementById('m-total').textContent = `τ${totalTao.toFixed(3)}`;
+  document.getElementById('m-positions').textContent = walletPositions.length;
+  document.getElementById('m-buys').textContent = buys;
+  document.getElementById('m-exits').textContent = exits;
+  document.getElementById('last-updated').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+}
+
+async function loadAll() {
+  document.getElementById('status-bar').innerHTML = 'Fetching data...';
+  try {
+    await loadWallet();
+    render();
+    const netuids = walletPositions.map(p => p.netuid);
+    await Promise.all(netuids.map(loadPool));
+    render();
+    document.getElementById('status-bar').innerHTML = 'Live data · <span>taostats.io</span>';
+  } catch(e) {
+    document.getElementById('status-bar').innerHTML = `Error: ${e.message}`;
+  }
+}
+
+loadAll();
+</script>
+</body>
+</html>
