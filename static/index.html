@@ -151,7 +151,7 @@
       <div class="footer-meta" id="last-updated">—</div>
       <div class="next-refresh" id="next-refresh"></div>
     </div>
-    <button class="refresh-btn" onclick="loadAll()">Refresh now</button>
+    <button class="refresh-btn" onclick="manualRefresh()">Refresh now</button>
   </div>
 </div>
 
@@ -163,8 +163,11 @@ let flowData = {};
 let refreshTimer = null;
 let countdownTimer = null;
 let nextRefreshAt = null;
+let cacheStatus = 'pending';
 
-const REFRESH_INTERVAL_MS = 12 * 60 * 60 * 1000;
+// Poll the cache endpoint — backend refreshes every 15 min on its own schedule
+const POLL_INTERVAL_MS = 60 * 1000;        // re-check cache every 60s
+const REFRESH_INTERVAL_MS = 15 * 60 * 1000; // countdown display
 
 // ── Signal evaluation ────────────────────────────────────────────────────────
 //
@@ -304,45 +307,33 @@ function fmtApy(val) {
 
 // ── Data fetching ────────────────────────────────────────────────────────────
 
-async function loadWallet() {
-  const res = await fetch('/api/wallet');
+async function loadCache() {
+  const res = await fetch('/api/cache');
   const json = await res.json();
-  if (json.error) throw new Error(json.error);
-  walletPositions = json.positions.filter(p => p.tao_value > 0.0001);
-  document.getElementById('wallet-addr').textContent = json.coldkey;
-}
+  if (json.error && !json.positions) throw new Error(json.error);
 
-async function loadPool(netuid) {
-  try {
-    const res = await fetch(`/api/subnet/${netuid}`);
-    const json = await res.json();
-    if (!json.error) {
-      if (json.price == null && json.change_7d == null && json.emission_pct == null) {
-        console.warn(`SN${netuid} pool: all fields null. Raw API keys:`, json._raw_keys);
-      }
-      delete json._raw_keys;
-      poolData[netuid] = json;
-      console.log(`poolData[${netuid}] stored (type=${typeof netuid}):`, json.price, json.change_7d, json.emission_pct);
-    } else {
-      console.error(`SN${netuid} pool error:`, json.error);
-    }
-  } catch(e) { console.error(`SN${netuid} pool fetch threw:`, e); }
-}
+  cacheStatus = json.status;
 
-async function loadYield(netuid) {
-  try {
-    const res = await fetch(`/api/yield/${netuid}`);
-    const json = await res.json();
-    if (!json.error) yieldData[netuid] = json;
-  } catch(e) {}
-}
+  if (json.positions && json.positions.length) {
+    walletPositions = json.positions.filter(p => p.tao_value > 0.0001);
+    document.getElementById('wallet-addr').textContent = json.coldkey;
+  }
 
-async function loadFlow(netuid) {
-  try {
-    const res = await fetch(`/api/taoflow/${netuid}`);
-    const json = await res.json();
-    if (!json.error) flowData[netuid] = json;
-  } catch(e) {}
+  // Pool keys from backend are integers — normalise to int for consistent lookup
+  if (json.pool) {
+    poolData = {};
+    for (const [k, v] of Object.entries(json.pool)) poolData[parseInt(k)] = v;
+  }
+  if (json.yield) {
+    yieldData = {};
+    for (const [k, v] of Object.entries(json.yield)) yieldData[parseInt(k)] = v;
+  }
+  if (json.flow) {
+    flowData = {};
+    for (const [k, v] of Object.entries(json.flow)) flowData[parseInt(k)] = v;
+  }
+
+  return json;
 }
 
 // ── Render ───────────────────────────────────────────────────────────────────
@@ -356,12 +347,9 @@ function render() {
 
   let totalTao = 0, buys = 0, holds = 0, sells = 0;
   let html = '';
-
-  console.log('render() poolData keys:', Object.keys(poolData), '| walletPosition netuids:', walletPositions.map(p => `${p.netuid}(${typeof p.netuid})`));
   walletPositions.forEach((p, idx) => {
     totalTao += p.tao_value;
     const pd = poolData[p.netuid] || {};
-    if (idx === 0) console.log(`SN${p.netuid} pd lookup:`, pd, '| poolData[p.netuid] key type check:', typeof p.netuid);
     const yd = yieldData[p.netuid] || {};
     const signals = evalSignals(p);
     const action = getAction(signals);
@@ -468,35 +456,52 @@ function startCountdown() {
 
 // ── Main load ────────────────────────────────────────────────────────────────
 
-const sleep = ms => new Promise(r => setTimeout(r, ms));
-
-async function loadSubnetData(netuid, i) {
-  // Stagger by 300ms per subnet to avoid 429s from TaoStats
-  await sleep(i * 300);
-  await Promise.all([loadPool(netuid), loadYield(netuid), loadFlow(netuid)]);
-  render(); // re-render as each subnet comes in
-}
-
 async function loadAll() {
   document.getElementById('status-bar').innerHTML = 'Fetching data...';
   document.getElementById('next-refresh').textContent = '';
   if (refreshTimer) clearTimeout(refreshTimer);
 
   try {
-    await loadWallet();
+    const json = await loadCache();
     render();
 
-    const netuids = walletPositions.map(p => p.netuid);
-    // Load subnets sequentially with stagger — avoids TaoStats 429 rate limits
-    await Promise.all(netuids.map((netuid, i) => loadSubnetData(netuid, i)));
+    if (json.status === 'pending' || json.status === 'refreshing') {
+      // Backend is still warming up — show status and poll again shortly
+      const msg = json.status === 'pending'
+        ? 'Server is fetching data for the first time (~5 min)...'
+        : 'Refreshing data in background...';
+      document.getElementById('status-bar').innerHTML = msg;
+      refreshTimer = setTimeout(loadAll, 15_000); // poll every 15s while warming
+      return;
+    }
 
-    document.getElementById('status-bar').innerHTML = 'Live data · <span>taostats.io</span>';
+    if (json.last_updated) {
+      const age = Math.round((Date.now() / 1000 - json.last_updated) / 60);
+      document.getElementById('status-bar').innerHTML =
+        `Cached data · <span>taostats.io</span> · updated ${age}m ago`;
+    } else {
+      document.getElementById('status-bar').innerHTML = 'Live data · <span>taostats.io</span>';
+    }
   } catch(e) {
     document.getElementById('status-bar').innerHTML = `Error: ${e.message}`;
   }
 
-  refreshTimer = setTimeout(loadAll, REFRESH_INTERVAL_MS);
+  // Poll every 60s to pick up background cache updates
+  refreshTimer = setTimeout(loadAll, POLL_INTERVAL_MS);
   startCountdown();
+}
+
+async function manualRefresh() {
+  document.getElementById('status-bar').innerHTML = 'Requesting refresh...';
+  try {
+    await fetch('/api/cache/refresh', { method: 'POST' });
+    // Poll quickly to pick up new data as it arrives
+    if (refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(loadAll, 5_000);
+    document.getElementById('status-bar').innerHTML = 'Refresh started — data arriving in ~5 min...';
+  } catch(e) {
+    document.getElementById('status-bar').innerHTML = `Error: ${e.message}`;
+  }
 }
 
 loadAll();
