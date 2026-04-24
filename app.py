@@ -2,6 +2,7 @@ import os
 import requests
 from flask import Flask, jsonify, send_from_directory
 from flask_cors import CORS
+from collections import defaultdict
 
 app = Flask(__name__, static_folder="static")
 CORS(app)
@@ -20,13 +21,22 @@ def index():
 
 @app.route("/api/wallet")
 def wallet():
-    """Fetch real staked positions for the configured coldkey."""
+    """Fetch real staked positions for the configured coldkey, grouped by subnet."""
     try:
         url = f"{TAOSTATS_BASE}/api/dtao/stake_balance/latest/v1?coldkey={COLDKEY}&limit=50"
         r = requests.get(url, headers=HEADERS, timeout=10)
         r.raise_for_status()
         data = r.json()
-        positions = []
+
+        # Group by netuid
+        grouped = defaultdict(lambda: {
+            "netuid": None,
+            "alpha_balance": 0.0,
+            "tao_value": 0.0,
+            "validators": [],
+            "subnet_rank": None,
+        })
+
         for item in data.get("data", []):
             netuid = item.get("netuid")
             if netuid is None:
@@ -35,14 +45,20 @@ def wallet():
             balance_tao = balance_rao / 1_000_000_000
             balance_as_tao_rao = int(item.get("balance_as_tao", 0))
             balance_as_tao = balance_as_tao_rao / 1_000_000_000
-            positions.append({
-                "netuid": netuid,
+
+            g = grouped[netuid]
+            g["netuid"] = netuid
+            g["alpha_balance"] = round(g["alpha_balance"] + balance_tao, 6)
+            g["tao_value"] = round(g["tao_value"] + balance_as_tao, 6)
+            g["subnet_rank"] = item.get("subnet_rank")  # same for all validators in subnet
+            g["validators"].append({
                 "hotkey": item.get("hotkey", {}).get("ss58", ""),
                 "hotkey_name": item.get("hotkey_name", ""),
                 "alpha_balance": round(balance_tao, 6),
                 "tao_value": round(balance_as_tao, 6),
-                "subnet_rank": item.get("subnet_rank"),
             })
+
+        positions = sorted(grouped.values(), key=lambda x: x["tao_value"], reverse=True)
         return jsonify({"coldkey": COLDKEY, "positions": positions})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
