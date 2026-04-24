@@ -30,6 +30,38 @@ def safe_float(v):
         return None
 
 
+def normalize_pct_change(v):
+    """
+    Taostats returns price change fields inconsistently:
+      - Sometimes as a full percentage string: "-1.531510351146197775" (means -1.53%)
+      - Sometimes as a decimal fraction: "-0.01531" (means -1.53%)
+    
+    The debug data for SN64 confirmed:
+      price_change_1_week = "-1.531510351146197775"  -> already a percentage
+      price_change_1_month = "-5.491489530646304372" -> already a percentage
+    
+    The -149.9% bug happened because some subnets return a value like "-1.499"
+    which our old guard (-2 < x < 2) caught and multiplied by 100 -> -149.9%.
+    
+    Better heuristic: if abs(value) >= 100, it's definitely already a percentage.
+    If abs(value) < 2, it MIGHT be a fraction — but given real-world price changes
+    rarely exceed 200% in a week, we treat anything with abs < 2 as a fraction
+    ONLY if it has more than 4 significant decimal places (i.e. looks like 0.01531).
+    Otherwise treat as already a percentage.
+    
+    Simplest safe rule that fits the confirmed data:
+    - If the raw string has more than 2 digits before the decimal point -> already pct
+    - If abs(value) >= 2 -> already pct  
+    - If abs(value) < 2 AND the value looks like it came from a fraction field -> * 100
+    
+    Since confirmed data shows values like -1.53, -5.49, -0.48 (all already pct),
+    the safest fix is: NEVER multiply by 100. The API returns percentages directly.
+    The old fraction guard was wrong for this API.
+    """
+    f = safe_float(v)
+    return f  # Return as-is — taostats price_change fields are already percentages
+
+
 @app.route("/")
 def index():
     return send_from_directory("static", "index.html")
@@ -121,7 +153,7 @@ def wallet():
 
 @app.route("/api/subnet/<int:netuid>")
 def subnet_pool(netuid):
-    """Fetch pool data (price, 7d/30d change, emission) for a subnet."""
+    """Fetch pool data (price, 7d/30d change, emission, name) for a subnet."""
     try:
         url = f"{TAOSTATS_BASE}/api/dtao/pool/latest/v1?netuid={netuid}"
         r = requests.get(url, headers=HEADERS, timeout=10)
@@ -130,38 +162,34 @@ def subnet_pool(netuid):
         d = raw.get("data", [])
         d = d[0] if isinstance(d, list) and d else (d if isinstance(d, dict) else {})
 
+        # Subnet name — confirmed present in pool response as "name"
+        name = first_val(d, "name", "subnet_name", "title")
+
         price = safe_float(first_val(d, "price", "last_price", "alpha_price", "token_price"))
 
-        # price_change fields come back as full percentages (e.g. -1.53, not -0.0153)
-        # Only multiply by 100 if the value looks like a decimal fraction (abs < 2)
-        change_7d = safe_float(first_val(d,
+        # CONFIRMED: price_change fields are already full percentages (e.g. -1.53, -5.49)
+        # Do NOT multiply by 100 — that caused the -149.9% bug
+        change_7d = normalize_pct_change(first_val(d,
             "price_change_1_week", "price_change_7d", "change_7d",
             "token_price_change_1_week", "alpha_price_change_1_week"
         ))
-        if change_7d is not None and -2.0 < change_7d < 2.0 and change_7d != 0:
-            change_7d = change_7d * 100
 
-        change_30d = safe_float(first_val(d,
+        change_30d = normalize_pct_change(first_val(d,
             "price_change_1_month", "price_change_30d", "change_30d",
             "price_change_4_weeks", "token_price_change_1_month", "alpha_price_change_1_month"
         ))
-        if change_30d is not None and -2.0 < change_30d < 2.0 and change_30d != 0:
-            change_30d = change_30d * 100
 
-        # CONFIRMED from debug: pool response does NOT have an "emission" field.
-        # root_prop IS present (e.g. 0.1582) = this subnet's share of root emissions.
-        # We expose it as emission_pct (multiply by 100 to get a percentage).
+        # CONFIRMED: pool response has "root_prop" (e.g. 0.1582 = 15.82%), not "emission"
         emission = None
         emission_pct = None
-
         root_prop = safe_float(first_val(d, "emission", "emission_share", "tao_emission", "root_prop"))
         if root_prop is not None:
-            # If already > 1 it was already a percentage, otherwise it's a fraction
             emission_pct = root_prop if root_prop > 1.0 else root_prop * 100
             emission = root_prop
 
         return jsonify({
             "netuid": netuid,
+            "name": name,
             "price": price,
             "change_7d": change_7d,
             "change_30d": change_30d,
@@ -176,8 +204,7 @@ def subnet_pool(netuid):
 def validator_yield(netuid):
     """Fetch validator APY data for a subnet.
 
-    CONFIRMED from debug: seven_day_apy is returned as a FRACTION, not a percentage.
-    e.g. 0.402 = 40.2% APY. We multiply by 100 before returning.
+    CONFIRMED: seven_day_apy is a fraction (e.g. 0.402 = 40.2%). Multiply by 100.
     """
     try:
         url = f"{TAOSTATS_BASE}/api/dtao/validator/yield/latest/v1?netuid={netuid}"
@@ -199,8 +226,8 @@ def validator_yield(netuid):
             )
             apy = safe_float(apy_raw)
 
-            # CONFIRMED: values like 0.402 are fractions → multiply by 100 to get 40.2%
-            # Guard: if somehow a value comes back > 5 it's already a percentage
+            # CONFIRMED: values like 0.402 are fractions -> multiply by 100 to get 40.2%
+            # Guard: if value > 5 it's already a percentage
             if apy is not None and apy <= 5.0:
                 apy = apy * 100
 
@@ -230,9 +257,8 @@ def validator_yield(netuid):
 def tao_flow(netuid):
     """Fetch TAO flow trend for a subnet.
 
-    CONFIRMED from debug: response only has 'tao_flow' (no EMA field).
-    tao_flow is a raw rao value (e.g. 4046653175922 = ~4046 TAO net inflow).
-    Positive = net buying pressure. We use it directly as the flow signal.
+    CONFIRMED: only 'tao_flow' field exists (no EMA). Value is in rao -> convert to TAO.
+    Positive = net buying pressure = green signal.
     """
     try:
         url = f"{TAOSTATS_BASE}/api/dtao/tao_flow/v1?netuid={netuid}"
@@ -245,21 +271,18 @@ def tao_flow(netuid):
 
         d = data[0] if isinstance(data, list) else data
 
-        # CONFIRMED: only 'tao_flow' exists, no EMA variant
         flow_raw = safe_float(first_val(d,
             "tao_flow", "flow", "net_tao_in", "net_flow",
             "tao_net_flow", "net_tao_flow", "alpha_flow"
         ))
 
-        # Convert from rao to TAO for readability in tooltips
+        # Convert rao to TAO
         flow_tao = flow_raw / 1_000_000_000 if flow_raw is not None else None
 
-        # No EMA available — use raw flow as the signal value
-        # flow_ema is what the frontend checks for sign (positive = green)
         return jsonify({
             "netuid": netuid,
             "flow": flow_tao,
-            "flow_ema": flow_tao,  # fallback: raw flow used as signal
+            "flow_ema": flow_tao,
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500

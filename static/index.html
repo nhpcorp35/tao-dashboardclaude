@@ -48,6 +48,7 @@
     .dot-green { background: #16a34a; }
     .dot-red   { background: #dc2626; }
     .dot-grey  { background: #d1d5db; }
+    .subnet-name { font-size: 11px; color: #888; margin-top: 2px; }
     .footer { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
     .footer-meta { font-size: 12px; color: #aaa; }
     .refresh-btn { font-size: 13px; padding: 7px 16px; border: 1px solid #e5e5e3; border-radius: 8px; background: #fff; color: #555; cursor: pointer; }
@@ -167,21 +168,17 @@ const REFRESH_INTERVAL_MS = 12 * 60 * 60 * 1000;
 
 // ── Signal evaluation ────────────────────────────────────────────────────────
 //
-// Thresholds calibrated from real debug data (SN64 as reference):
+// APY: backend multiplies by 100, so values here are already percentages (e.g. 40.2)
+//   ≥20% green, 5-20% grey (not penalised), <5% red
 //
-//   APY: backend now returns values already multiplied by 100 (e.g. 40.2%).
-//        ≥20% = green (dTAO subnets genuinely yield 30-40%)
-//        5-20% = grey (not penalised, mid range)
-//        <5%   = red
+// Emission (root_prop): returned as % (e.g. 15.82 for SN64)
+//   ≥1% green
 //
-//   Emission (root_prop): backend returns as % (e.g. 15.8 for SN64).
-//        ≥1% = green. Most subnets are well above this.
+// TAO flow: signed TAO value, positive = net inflow = green
 //
-//   TAO flow: backend returns signed TAO value (converted from rao).
-//        Positive = net inflow = green.
+// Price change: already a percentage from API (e.g. -1.53), no conversion needed
 //
-//   Grey dots are EXCLUDED from the score ratio entirely.
-//   This prevents data gaps from dragging subnets down to Sell/Watch.
+// Grey dots excluded from score ratio entirely — data gaps don't hurt subnets
 
 function evalSignals(p) {
   const pd = poolData[p.netuid] || {};
@@ -190,17 +187,14 @@ function evalSignals(p) {
 
   const apy = yd.seven_day_apy != null ? parseFloat(yd.seven_day_apy) : null;
 
-  // APY green logic: high threshold for dTAO (30-40% is normal)
-  // 5-20% is a grey zone — not bad, just middling, don't penalise
   function apyGreen(a) {
     if (a === null) return null;
     if (a >= 20) return true;
-    if (a >= 5)  return null;  // grey — excluded from score
+    if (a >= 5)  return null;  // grey zone — excluded from score
     return false;
   }
 
   const signals = [
-    // 1 — 7d price change
     {
       label: '7d price change',
       value: pd.change_7d != null
@@ -208,7 +202,6 @@ function evalSignals(p) {
         : 'No data',
       green: pd.change_7d != null ? pd.change_7d > 0 : null,
     },
-    // 2 — 30d price change
     {
       label: '30d price change',
       value: pd.change_30d != null
@@ -216,7 +209,6 @@ function evalSignals(p) {
         : 'No data',
       green: pd.change_30d != null ? pd.change_30d > 0 : null,
     },
-    // 3 — Root emission share (root_prop field, returned as %)
     {
       label: 'Root emission share',
       value: pd.emission_pct != null
@@ -224,7 +216,6 @@ function evalSignals(p) {
         : 'No data',
       green: pd.emission_pct != null ? pd.emission_pct >= 1.0 : null,
     },
-    // 4 — TAO flow (positive rao = net buying pressure)
     {
       label: 'TAO flow',
       value: fd.flow_ema != null
@@ -234,13 +225,11 @@ function evalSignals(p) {
         : 'No data',
       green: fd.flow_ema != null ? parseFloat(fd.flow_ema) >= 0 : null,
     },
-    // 5 — 7d APY (already in % from backend, e.g. 40.2)
     {
       label: '7d APY',
       value: apy != null ? `${apy.toFixed(1)}%` : 'No data',
       green: apyGreen(apy),
     },
-    // 6 — Best validator rank (top 100 green)
     {
       label: 'Best validator rank',
       value: (() => {
@@ -254,13 +243,11 @@ function evalSignals(p) {
         return Math.min(...ranks) <= 100;
       })(),
     },
-    // 7 — Alpha price direction (proxy via weekly change)
     {
       label: 'Alpha price direction',
       value: pd.price != null ? `τ${parseFloat(pd.price).toFixed(5)}` : 'No data',
       green: pd.change_7d != null ? pd.change_7d > 0 : null,
     },
-    // 8 — Position size (≥0.1 TAO = meaningful stake)
     {
       label: 'Position TAO value',
       value: `τ${p.tao_value.toFixed(4)}`,
@@ -272,7 +259,6 @@ function evalSignals(p) {
 }
 
 function getAction(signals) {
-  // Grey dots (green === null) excluded from ratio entirely
   const scored = signals.filter(s => s.green !== null);
   if (scored.length < 2) return 'watch';
   const greens = scored.filter(s => s.green).length;
@@ -312,7 +298,6 @@ function fmt7d(val) {
 function fmtApy(val) {
   if (val === null || val === undefined) return '<span style="color:#ccc">—</span>';
   const n = parseFloat(val);
-  // ≥20% green, 5-20% amber, <5% red — matches signal thresholds above
   const cls = n >= 20 ? 'green' : n >= 5 ? 'amber' : 'red';
   return `<span class="${cls}">${n.toFixed(1)}%</span>`;
 }
@@ -384,6 +369,9 @@ function render() {
       ? `${parseFloat(pd.emission_pct).toFixed(2)}%`
       : '<span style="color:#ccc">—</span>';
 
+    // Subnet name from pool data
+    const subnetName = pd.name || '';
+
     const validatorCount = p.validators ? p.validators.length : 0;
     const expandId = `validators-${idx}`;
     const iconId = `icon-${idx}`;
@@ -395,7 +383,8 @@ function render() {
       <td>
         <strong>SN${p.netuid}</strong>
         <span class="expand-icon" id="${iconId}">▶</span>
-        ${validatorCount > 1 ? `<br><span style="font-size:10px;color:#aaa">${validatorCount} validators</span>` : ''}
+        ${subnetName ? `<div class="subnet-name">${subnetName}</div>` : ''}
+        ${validatorCount > 1 ? `<div style="font-size:10px;color:#aaa">${validatorCount} validators</div>` : ''}
       </td>
       <td>${priceStr}</td>
       <td>${fmt7d(pd.change_7d)}</td>
