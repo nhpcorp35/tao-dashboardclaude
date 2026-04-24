@@ -15,7 +15,6 @@ HEADERS = {"Authorization": TAOSTATS_API_KEY}
 
 
 def first_val(d, *keys, default=None):
-    """Return the first non-None value found in dict d for the given keys."""
     for k in keys:
         v = d.get(k)
         if v is not None:
@@ -30,84 +29,43 @@ def safe_float(v):
         return None
 
 
-def normalize_pct_change(v):
-    """
-    Taostats returns price change fields inconsistently:
-      - Sometimes as a full percentage string: "-1.531510351146197775" (means -1.53%)
-      - Sometimes as a decimal fraction: "-0.01531" (means -1.53%)
-    
-    The debug data for SN64 confirmed:
-      price_change_1_week = "-1.531510351146197775"  -> already a percentage
-      price_change_1_month = "-5.491489530646304372" -> already a percentage
-    
-    The -149.9% bug happened because some subnets return a value like "-1.499"
-    which our old guard (-2 < x < 2) caught and multiplied by 100 -> -149.9%.
-    
-    Better heuristic: if abs(value) >= 100, it's definitely already a percentage.
-    If abs(value) < 2, it MIGHT be a fraction — but given real-world price changes
-    rarely exceed 200% in a week, we treat anything with abs < 2 as a fraction
-    ONLY if it has more than 4 significant decimal places (i.e. looks like 0.01531).
-    Otherwise treat as already a percentage.
-    
-    Simplest safe rule that fits the confirmed data:
-    - If the raw string has more than 2 digits before the decimal point -> already pct
-    - If abs(value) >= 2 -> already pct  
-    - If abs(value) < 2 AND the value looks like it came from a fraction field -> * 100
-    
-    Since confirmed data shows values like -1.53, -5.49, -0.48 (all already pct),
-    the safest fix is: NEVER multiply by 100. The API returns percentages directly.
-    The old fraction guard was wrong for this API.
-    """
-    f = safe_float(v)
-    return f  # Return as-is — taostats price_change fields are already percentages
-
-
 @app.route("/")
 def index():
     return send_from_directory("static", "index.html")
 
 
-# ── Debug endpoint — visit /api/debug/<netuid> to inspect raw API responses ──
-
 @app.route("/api/debug/<int:netuid>")
 def debug_subnet(netuid):
-    """Returns raw API responses for a subnet so you can find correct field names."""
     results = {}
-
     try:
         url = f"{TAOSTATS_BASE}/api/dtao/pool/latest/v1?netuid={netuid}"
         r = requests.get(url, headers=HEADERS, timeout=10)
         results["pool"] = {"status": r.status_code, "body": r.json()}
     except Exception as e:
         results["pool"] = {"error": str(e)}
-
     try:
         url = f"{TAOSTATS_BASE}/api/dtao/validator/yield/latest/v1?netuid={netuid}"
         r = requests.get(url, headers=HEADERS, timeout=10)
         results["yield"] = {"status": r.status_code, "body": r.json()}
     except Exception as e:
         results["yield"] = {"error": str(e)}
-
     try:
         url = f"{TAOSTATS_BASE}/api/dtao/tao_flow/v1?netuid={netuid}"
         r = requests.get(url, headers=HEADERS, timeout=10)
         results["tao_flow"] = {"status": r.status_code, "body": r.json()}
     except Exception as e:
         results["tao_flow"] = {"error": str(e)}
-
     try:
         url = f"{TAOSTATS_BASE}/api/dtao/stake_balance/latest/v1?coldkey={COLDKEY}&netuid={netuid}&limit=50"
         r = requests.get(url, headers=HEADERS, timeout=10)
         results["stake_balance"] = {"status": r.status_code, "body": r.json()}
     except Exception as e:
         results["stake_balance"] = {"error": str(e)}
-
     return jsonify(results)
 
 
 @app.route("/api/wallet")
 def wallet():
-    """Fetch real staked positions grouped by subnet, with per-validator detail."""
     try:
         url = f"{TAOSTATS_BASE}/api/dtao/stake_balance/latest/v1?coldkey={COLDKEY}&limit=50"
         r = requests.get(url, headers=HEADERS, timeout=10)
@@ -153,7 +111,6 @@ def wallet():
 
 @app.route("/api/subnet/<int:netuid>")
 def subnet_pool(netuid):
-    """Fetch pool data (price, 7d/30d change, emission, name) for a subnet."""
     try:
         url = f"{TAOSTATS_BASE}/api/dtao/pool/latest/v1?netuid={netuid}"
         r = requests.get(url, headers=HEADERS, timeout=10)
@@ -162,24 +119,21 @@ def subnet_pool(netuid):
         d = raw.get("data", [])
         d = d[0] if isinstance(d, list) and d else (d if isinstance(d, dict) else {})
 
-        # Subnet name — confirmed present in pool response as "name"
         name = first_val(d, "name", "subnet_name", "title")
-
         price = safe_float(first_val(d, "price", "last_price", "alpha_price", "token_price"))
 
-        # CONFIRMED: price_change fields are already full percentages (e.g. -1.53, -5.49)
-        # Do NOT multiply by 100 — that caused the -149.9% bug
-        change_7d = normalize_pct_change(first_val(d,
+        # CONFIRMED: taostats returns price changes as full percentages already (e.g. -1.53)
+        # Do not multiply by 100
+        change_7d = safe_float(first_val(d,
             "price_change_1_week", "price_change_7d", "change_7d",
             "token_price_change_1_week", "alpha_price_change_1_week"
         ))
-
-        change_30d = normalize_pct_change(first_val(d,
+        change_30d = safe_float(first_val(d,
             "price_change_1_month", "price_change_30d", "change_30d",
             "price_change_4_weeks", "token_price_change_1_month", "alpha_price_change_1_month"
         ))
 
-        # CONFIRMED: pool response has "root_prop" (e.g. 0.1582 = 15.82%), not "emission"
+        # CONFIRMED: field is root_prop, value is a fraction (0.158 = 15.8%)
         emission = None
         emission_pct = None
         root_prop = safe_float(first_val(d, "emission", "emission_share", "tao_emission", "root_prop"))
@@ -202,10 +156,6 @@ def subnet_pool(netuid):
 
 @app.route("/api/yield/<int:netuid>")
 def validator_yield(netuid):
-    """Fetch validator APY data for a subnet.
-
-    CONFIRMED: seven_day_apy is a fraction (e.g. 0.402 = 40.2%). Multiply by 100.
-    """
     try:
         url = f"{TAOSTATS_BASE}/api/dtao/validator/yield/latest/v1?netuid={netuid}"
         r = requests.get(url, headers=HEADERS, timeout=10)
@@ -225,14 +175,12 @@ def validator_yield(netuid):
                 "annualized_yield_7d", "seven_day_yield", "avg_apy"
             )
             apy = safe_float(apy_raw)
-
-            # CONFIRMED: values like 0.402 are fractions -> multiply by 100 to get 40.2%
-            # Guard: if value > 5 it's already a percentage
+            # CONFIRMED: values are fractions (0.402 = 40.2%) — multiply by 100
+            # Guard: if already > 5 assume it's already a percentage
             if apy is not None and apy <= 5.0:
                 apy = apy * 100
 
             rank = first_val(v, "validator_rank", "rank", "position")
-
             validators.append({
                 "hotkey": hotkey,
                 "seven_day_apy": apy,
@@ -243,7 +191,6 @@ def validator_yield(netuid):
             (v["seven_day_apy"] for v in validators if v["seven_day_apy"] is not None),
             default=None
         )
-
         return jsonify({
             "netuid": netuid,
             "seven_day_apy": best_apy,
@@ -255,11 +202,6 @@ def validator_yield(netuid):
 
 @app.route("/api/taoflow/<int:netuid>")
 def tao_flow(netuid):
-    """Fetch TAO flow trend for a subnet.
-
-    CONFIRMED: only 'tao_flow' field exists (no EMA). Value is in rao -> convert to TAO.
-    Positive = net buying pressure = green signal.
-    """
     try:
         url = f"{TAOSTATS_BASE}/api/dtao/tao_flow/v1?netuid={netuid}"
         r = requests.get(url, headers=HEADERS, timeout=10)
@@ -270,15 +212,11 @@ def tao_flow(netuid):
             return jsonify({"netuid": netuid, "flow": None, "flow_ema": None})
 
         d = data[0] if isinstance(data, list) else data
-
         flow_raw = safe_float(first_val(d,
             "tao_flow", "flow", "net_tao_in", "net_flow",
             "tao_net_flow", "net_tao_flow", "alpha_flow"
         ))
-
-        # Convert rao to TAO
         flow_tao = flow_raw / 1_000_000_000 if flow_raw is not None else None
-
         return jsonify({
             "netuid": netuid,
             "flow": flow_tao,
@@ -290,7 +228,6 @@ def tao_flow(netuid):
 
 @app.route("/api/subnets")
 def all_subnets():
-    """Fetch top-level subnet list with emissions and prices."""
     try:
         url = f"{TAOSTATS_BASE}/api/subnet/latest/v1"
         r = requests.get(url, headers=HEADERS, timeout=10)
