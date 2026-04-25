@@ -7,7 +7,7 @@
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f3; color: #1a1a1a; min-height: 100vh; padding: 2rem 1rem; }
-    .container { max-width: 1200px; margin: 0 auto; }
+    .container { max-width: 1280px; margin: 0 auto; }
     h1 { font-size: 20px; font-weight: 500; margin-bottom: 6px; }
     .wallet-addr { font-size: 12px; color: #888; font-family: monospace; margin-bottom: 2rem; word-break: break-all; }
     .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 2rem; }
@@ -23,7 +23,7 @@
     .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #666; }
     .ldot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
     .table-wrap { background: #fff; border: 1px solid #e5e5e3; border-radius: 12px; overflow-x: auto; margin-bottom: 1.5rem; }
-    table { width: 100%; border-collapse: collapse; min-width: 900px; }
+    table { width: 100%; border-collapse: collapse; min-width: 980px; }
     th { font-size: 11px; font-weight: 500; color: #aaa; text-align: left; padding: 10px 12px; border-bottom: 1px solid #f0f0ee; white-space: nowrap; }
     td { font-size: 13px; padding: 11px 12px; border-bottom: 1px solid #f5f5f3; vertical-align: middle; }
     tr:last-child td { border-bottom: none; }
@@ -81,6 +81,11 @@
       <div class="metric-sub">across all subnets</div>
     </div>
     <div class="metric-card">
+      <div class="metric-label">Portfolio Δτ (24h)</div>
+      <div class="metric-value" id="m-delta">—</div>
+      <div class="metric-sub" id="m-delta-sub">vs yesterday</div>
+    </div>
+    <div class="metric-card">
       <div class="metric-label">Active positions</div>
       <div class="metric-value" id="m-positions">—</div>
       <div class="metric-sub">subnets staked</div>
@@ -129,6 +134,7 @@
         <tr>
           <th>Subnet</th>
           <th>Alpha price</th>
+          <th>24h %</th>
           <th>7d %</th>
           <th>30d %</th>
           <th>7d APY</th>
@@ -140,7 +146,7 @@
         </tr>
       </thead>
       <tbody id="tbody">
-        <tr><td colspan="10" class="loading" style="padding:20px 12px">Loading your wallet positions...</td></tr>
+        <tr><td colspan="11" class="loading" style="padding:20px 12px">Loading your wallet positions...</td></tr>
       </tbody>
     </table>
   </div>
@@ -164,23 +170,43 @@ let countdownTimer = null;
 let nextRefreshAt = null;
 let cacheStatus = 'pending';
 
-// Poll the cache endpoint — backend refreshes every 15 min on its own schedule
-const POLL_INTERVAL_MS = 60 * 1000;        // re-check cache every 60s
-const REFRESH_INTERVAL_MS = 15 * 60 * 1000; // countdown display
+const POLL_INTERVAL_MS = 60 * 1000;
+const REFRESH_INTERVAL_MS = 15 * 60 * 1000;
+const PORTFOLIO_STORAGE_KEY = 'tao_portfolio_history';
+
+// ── Portfolio delta tracking ─────────────────────────────────────────────────
+
+function getToday() {
+  return new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+}
+
+function savePortfolioSnapshot(totalTao) {
+  try {
+    const history = JSON.parse(localStorage.getItem(PORTFOLIO_STORAGE_KEY) || '{}');
+    history[getToday()] = totalTao;
+    // Keep only last 7 days
+    const dates = Object.keys(history).sort().slice(-7);
+    const trimmed = {};
+    dates.forEach(d => trimmed[d] = history[d]);
+    localStorage.setItem(PORTFOLIO_STORAGE_KEY, JSON.stringify(trimmed));
+  } catch (e) {
+    console.warn('localStorage unavailable:', e);
+  }
+}
+
+function getYesterdayTotal() {
+  try {
+    const history = JSON.parse(localStorage.getItem(PORTFOLIO_STORAGE_KEY) || '{}');
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayKey = yesterday.toISOString().split('T')[0];
+    return history[yesterdayKey] || null;
+  } catch (e) {
+    return null;
+  }
+}
 
 // ── Signal evaluation ────────────────────────────────────────────────────────
-//
-// APY: backend multiplies by 100, so values here are already percentages (e.g. 40.2)
-//   ≥20% green, 5-20% grey (not penalised), <5% red
-//
-// Emission (root_prop): returned as % (e.g. 15.82 for SN64)
-//   ≥1% green
-//
-// TAO flow: signed TAO value, positive = net inflow = green
-//
-// Price change: already a percentage from API (e.g. -1.53), no conversion needed
-//
-// Grey dots excluded from score ratio entirely — data gaps don't hurt subnets
 
 function evalSignals(p) {
   const pd = poolData[p.netuid] || {};
@@ -192,7 +218,7 @@ function evalSignals(p) {
   function apyGreen(a) {
     if (a === null) return null;
     if (a >= 20) return true;
-    if (a >= 5)  return null;  // grey zone — excluded from score
+    if (a >= 5)  return null;
     return false;
   }
 
@@ -286,7 +312,7 @@ function renderDots(signals) {
 
 // ── Formatting helpers ───────────────────────────────────────────────────────
 
-function fmt7d(val) {
+function fmtChange(val) {
   if (val === null || val === undefined || isNaN(val)) return '<span style="color:#ccc">—</span>';
   const cls = val >= 0 ? 'green' : 'red';
   return `<span class="${cls}">${val >= 0 ? '+' : ''}${parseFloat(val).toFixed(1)}%</span>`;
@@ -313,7 +339,6 @@ async function loadCache() {
     document.getElementById('wallet-addr').textContent = json.coldkey;
   }
 
-  // Pool keys from backend are integers — normalise to int for consistent lookup
   if (json.pool) {
     poolData = {};
     for (const [k, v] of Object.entries(json.pool)) poolData[parseInt(k)] = v;
@@ -335,7 +360,7 @@ async function loadCache() {
 function render() {
   const tbody = document.getElementById('tbody');
   if (!walletPositions.length) {
-    tbody.innerHTML = '<tr><td colspan="10" class="loading" style="padding:20px 12px">No staked positions found.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11" class="loading" style="padding:20px 12px">No staked positions found.</td></tr>';
     return;
   }
 
@@ -362,7 +387,6 @@ function render() {
       ? `${parseFloat(pd.emission_pct).toFixed(2)}%`
       : '<span style="color:#ccc">—</span>';
 
-    // Subnet name from pool data
     const subnetName = pd.name || '';
 
     const validatorCount = p.validators ? p.validators.length : 0;
@@ -380,8 +404,9 @@ function render() {
         ${validatorCount > 1 ? `<div style="font-size:10px;color:#aaa">${validatorCount} validators</div>` : ''}
       </td>
       <td>${priceStr}</td>
-      <td>${fmt7d(pd.change_7d)}</td>
-      <td>${fmt7d(pd.change_30d)}</td>
+      <td>${fmtChange(pd.change_24h)}</td>
+      <td>${fmtChange(pd.change_7d)}</td>
+      <td>${fmtChange(pd.change_30d)}</td>
       <td>${fmtApy(yd.seven_day_apy)}</td>
       <td>${emStr}</td>
       <td>${p.alpha_balance.toFixed(4)}</td>
@@ -390,10 +415,9 @@ function render() {
       <td title="${coverageTip}">${renderDots(signals)}</td>
     </tr>`;
 
-    // Validator sub-rows
     if (p.validators && p.validators.length) {
       html += `<tbody class="validator-rows" id="${expandId}">`;
-      html += `<tr class="validator-row"><td class="validator-label" colspan="10">↳ Validators</td></tr>`;
+      html += `<tr class="validator-row"><td class="validator-label" colspan="11">↳ Validators</td></tr>`;
       p.validators.forEach(v => {
         const vyData = (yd.validators || []).find(yv => yv.hotkey === v.hotkey);
         const vApy = vyData ? fmtApy(vyData.seven_day_apy) : '<span style="color:#ccc">—</span>';
@@ -401,7 +425,7 @@ function render() {
         const name = v.hotkey_name || (v.hotkey ? v.hotkey.slice(0, 12) + '…' : '—');
         html += `<tr class="validator-row">
           <td style="padding-left:28px;color:#555">${name}</td>
-          <td colspan="3" style="color:#aaa;font-size:11px;font-family:monospace">${v.hotkey ? v.hotkey.slice(0,16) + '…' : '—'}</td>
+          <td colspan="4" style="color:#aaa;font-size:11px;font-family:monospace">${v.hotkey ? v.hotkey.slice(0,16) + '…' : '—'}</td>
           <td>${vApy}</td>
           <td style="color:#aaa">—</td>
           <td>${v.alpha_balance.toFixed(4)}</td>
@@ -416,11 +440,29 @@ function render() {
 
   tbody.innerHTML = html;
 
+  // Update metrics
   document.getElementById('m-total').textContent = `τ${totalTao.toFixed(3)}`;
   document.getElementById('m-positions').textContent = walletPositions.length;
   document.getElementById('m-buys').textContent = buys;
   document.getElementById('m-holds').textContent = holds;
   document.getElementById('m-sells').textContent = sells;
+
+  // Portfolio delta
+  const yesterdayTotal = getYesterdayTotal();
+  const deltaEl = document.getElementById('m-delta');
+  const deltaSubEl = document.getElementById('m-delta-sub');
+  if (yesterdayTotal !== null) {
+    const delta = totalTao - yesterdayTotal;
+    const pct = ((delta / yesterdayTotal) * 100);
+    deltaEl.innerHTML = `<span class="${delta >= 0 ? 'green' : 'red'}">${delta >= 0 ? '+' : ''}τ${delta.toFixed(3)}</span>`;
+    deltaSubEl.textContent = `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}% vs yesterday`;
+  } else {
+    deltaEl.textContent = '—';
+    deltaSubEl.textContent = 'no baseline yet';
+  }
+
+  savePortfolioSnapshot(totalTao);
+
   document.getElementById('last-updated').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
 }
 
@@ -460,12 +502,11 @@ async function loadAll() {
     render();
 
     if (json.status === 'pending' || json.status === 'refreshing') {
-      // Backend is still warming up — show status and poll again shortly
       const msg = json.status === 'pending'
         ? 'Server is fetching data for the first time (~5 min)...'
         : 'Refreshing data in background...';
       document.getElementById('status-bar').innerHTML = msg;
-      refreshTimer = setTimeout(loadAll, 15_000); // poll every 15s while warming
+      refreshTimer = setTimeout(loadAll, 15_000);
       return;
     }
 
@@ -480,7 +521,6 @@ async function loadAll() {
     document.getElementById('status-bar').innerHTML = `Error: ${e.message}`;
   }
 
-  // Poll every 60s to pick up background cache updates
   refreshTimer = setTimeout(loadAll, POLL_INTERVAL_MS);
   startCountdown();
 }
@@ -489,7 +529,6 @@ async function manualRefresh() {
   document.getElementById('status-bar').innerHTML = 'Requesting refresh...';
   try {
     await fetch('/api/cache/refresh', { method: 'POST' });
-    // Poll quickly to pick up new data as it arrives
     if (refreshTimer) clearTimeout(refreshTimer);
     refreshTimer = setTimeout(loadAll, 5_000);
     document.getElementById('status-bar').innerHTML = 'Refresh started — data arriving in ~5 min...';

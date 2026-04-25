@@ -135,6 +135,9 @@ def parse_pool(raw, netuid):
     )
     price = safe_float(first_val(d, "price", "last_price", "alpha_price", "token_price",
                                  "current_price", "alpha_token_price"))
+    change_24h = safe_float(first_val(d, "price_change_1_day", "price_change_24h", "change_24h",
+                                      "alpha_price_change_1_day", "token_price_change_1_day",
+                                      "price_change_day"))
     change_7d = safe_float(first_val(d, "price_change_1_week", "price_change_7d", "change_7d",
                                      "token_price_change_1_week", "alpha_price_change_1_week",
                                      "alpha_price_change_7d", "price_change_week"))
@@ -148,7 +151,7 @@ def parse_pool(raw, netuid):
     if root_prop is not None:
         emission_pct = root_prop if root_prop > 1.0 else root_prop * 100
     return {"netuid": netuid, "name": name, "price": price,
-            "change_7d": change_7d, "change_30d": change_30d,
+            "change_24h": change_24h, "change_7d": change_7d, "change_30d": change_30d,
             "emission": root_prop, "emission_pct": emission_pct}
 
 
