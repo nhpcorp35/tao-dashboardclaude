@@ -22,9 +22,22 @@
     .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
     .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #666; }
     .ldot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+    .filter-bar { display: flex; gap: 8px; margin-bottom: 16px; align-items: center; }
+    .filter-label { font-size: 12px; color: #888; font-weight: 500; }
+    .filter-btn { font-size: 12px; padding: 6px 14px; border: 1px solid #e5e5e3; border-radius: 8px; background: #fff; color: #555; cursor: pointer; display: flex; align-items: center; gap: 6px; transition: all 0.15s; }
+    .filter-btn:hover { background: #f5f5f3; }
+    .filter-btn.active { border-color: currentColor; font-weight: 500; }
+    .filter-btn.buy.active { background: #eff6ff; color: #1d4ed8; border-color: #1d4ed8; }
+    .filter-btn.hold.active { background: #f0fdf4; color: #15803d; border-color: #15803d; }
+    .filter-btn.watch.active { background: #fefce8; color: #a16207; border-color: #a16207; }
+    .filter-btn.sell.active { background: #fef2f2; color: #b91c1c; border-color: #b91c1c; }
     .table-wrap { background: #fff; border: 1px solid #e5e5e3; border-radius: 12px; overflow-x: auto; margin-bottom: 1.5rem; }
-    table { width: 100%; border-collapse: collapse; min-width: 980px; }
-    th { font-size: 11px; font-weight: 500; color: #aaa; text-align: left; padding: 10px 12px; border-bottom: 1px solid #f0f0ee; white-space: nowrap; }
+    table { width: 100%; border-collapse: collapse; min-width: 900px; }
+    th { font-size: 11px; font-weight: 500; color: #aaa; text-align: left; padding: 10px 12px; border-bottom: 1px solid #f0f0ee; white-space: nowrap; user-select: none; }
+    th.sortable { cursor: pointer; }
+    th.sortable:hover { color: #555; }
+    th.sorted { color: #1a1a1a; }
+    .sort-indicator { display: inline-block; margin-left: 4px; font-size: 9px; color: #888; }
     td { font-size: 13px; padding: 11px 12px; border-bottom: 1px solid #f5f5f3; vertical-align: middle; }
     tr:last-child td { border-bottom: none; }
     tr.subnet-row { cursor: pointer; }
@@ -115,8 +128,6 @@
       <div class="signal-key-item"><div class="dot-num">3</div> Root emission share (≥1% green)</div>
       <div class="signal-key-item"><div class="dot-num">4</div> TAO flow (positive = green)</div>
       <div class="signal-key-item"><div class="dot-num">5</div> 7d APY (≥20% green, 5–20% grey)</div>
-      <div class="signal-key-item"><div class="dot-num">6</div> Best validator rank (top 100)</div>
-      <div class="signal-key-item"><div class="dot-num">7</div> Position size (≥0.1τ green)</div>
     </div>
   </div>
 
@@ -128,25 +139,32 @@
     <div class="legend-item"><div class="ldot" style="background:#d1d5db"></div> No data (not counted in score)</div>
   </div>
 
+  <div class="filter-bar">
+    <span class="filter-label">Show:</span>
+    <button class="filter-btn buy active" onclick="toggleFilter('buy')">🔵 Buy</button>
+    <button class="filter-btn hold active" onclick="toggleFilter('hold')">🟢 Hold</button>
+    <button class="filter-btn watch active" onclick="toggleFilter('watch')">🟠 Watch</button>
+    <button class="filter-btn sell active" onclick="toggleFilter('sell')">🔴 Sell</button>
+  </div>
+
   <div class="table-wrap">
     <table>
       <thead>
         <tr>
           <th>Subnet</th>
-          <th>Alpha price</th>
-          <th>24h %</th>
-          <th>7d %</th>
-          <th>30d %</th>
-          <th>7d APY</th>
-          <th>Root prop %</th>
-          <th>Alpha staked</th>
-          <th>TAO value</th>
-          <th>Action</th>
+          <th class="sortable" onclick="sortBy('price')">Alpha price <span class="sort-indicator" id="sort-price"></span></th>
+          <th class="sortable" onclick="sortBy('change_24h')">24h % <span class="sort-indicator" id="sort-change_24h"></span></th>
+          <th class="sortable" onclick="sortBy('change_7d')">7d % <span class="sort-indicator" id="sort-change_7d"></span></th>
+          <th class="sortable" onclick="sortBy('apy')">7d APY <span class="sort-indicator" id="sort-apy"></span></th>
+          <th class="sortable" onclick="sortBy('emission')">Root prop % <span class="sort-indicator" id="sort-emission"></span></th>
+          <th class="sortable" onclick="sortBy('alpha_balance')">Alpha staked <span class="sort-indicator" id="sort-alpha_balance"></span></th>
+          <th class="sortable" onclick="sortBy('tao_value')">TAO value <span class="sort-indicator" id="sort-tao_value"></span></th>
+          <th class="sortable" onclick="sortBy('action')">Action <span class="sort-indicator" id="sort-action"></span></th>
           <th>Signals</th>
         </tr>
       </thead>
       <tbody id="tbody">
-        <tr><td colspan="11" class="loading" style="padding:20px 12px">Loading your wallet positions...</td></tr>
+        <tr><td colspan="10" class="loading" style="padding:20px 12px">Loading your wallet positions...</td></tr>
       </tbody>
     </table>
   </div>
@@ -174,17 +192,23 @@ const POLL_INTERVAL_MS = 60 * 1000;
 const REFRESH_INTERVAL_MS = 15 * 60 * 1000;
 const PORTFOLIO_STORAGE_KEY = 'tao_portfolio_history';
 
+// Sorting state
+let sortColumn = null;
+let sortDirection = 'desc';
+
+// Filter state (all active by default)
+let activeFilters = { buy: true, hold: true, watch: true, sell: true };
+
 // ── Portfolio delta tracking ─────────────────────────────────────────────────
 
 function getToday() {
-  return new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+  return new Date().toISOString().split('T')[0];
 }
 
 function savePortfolioSnapshot(totalTao) {
   try {
     const history = JSON.parse(localStorage.getItem(PORTFOLIO_STORAGE_KEY) || '{}');
     history[getToday()] = totalTao;
-    // Keep only last 7 days
     const dates = Object.keys(history).sort().slice(-7);
     const trimmed = {};
     dates.forEach(d => trimmed[d] = history[d]);
@@ -258,24 +282,6 @@ function evalSignals(p) {
       value: apy != null ? `${apy.toFixed(1)}%` : 'No data',
       green: apyGreen(apy),
     },
-    {
-      label: 'Best validator rank',
-      value: (() => {
-        const ranks = (p.validators || []).map(v => v.validator_rank).filter(r => r != null);
-        if (!ranks.length) return 'No data';
-        return '#' + Math.min(...ranks);
-      })(),
-      green: (() => {
-        const ranks = (p.validators || []).map(v => v.validator_rank).filter(r => r != null);
-        if (!ranks.length) return null;
-        return Math.min(...ranks) <= 100;
-      })(),
-    },
-    {
-      label: 'Position TAO value',
-      value: `τ${p.tao_value.toFixed(4)}`,
-      green: p.tao_value >= 0.1,
-    },
   ];
 
   return signals;
@@ -325,6 +331,48 @@ function fmtApy(val) {
   return `<span class="${cls}">${n.toFixed(1)}%</span>`;
 }
 
+// ── Sorting ──────────────────────────────────────────────────────────────────
+
+function sortBy(column) {
+  if (sortColumn === column) {
+    sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+  } else {
+    sortColumn = column;
+    sortDirection = 'desc';
+  }
+  render();
+}
+
+function getSortValue(p, column) {
+  const pd = poolData[p.netuid] || {};
+  const yd = yieldData[p.netuid] || {};
+  
+  switch(column) {
+    case 'price': return pd.price ?? -Infinity;
+    case 'change_24h': return pd.change_24h ?? -Infinity;
+    case 'change_7d': return pd.change_7d ?? -Infinity;
+    case 'apy': return yd.seven_day_apy ?? -Infinity;
+    case 'emission': return pd.emission_pct ?? -Infinity;
+    case 'alpha_balance': return p.alpha_balance;
+    case 'tao_value': return p.tao_value;
+    case 'action': 
+      const signals = evalSignals(p);
+      const action = getAction(signals);
+      const rank = { buy: 4, hold: 3, watch: 2, sell: 1 };
+      return rank[action];
+    default: return 0;
+  }
+}
+
+// ── Filtering ────────────────────────────────────────────────────────────────
+
+function toggleFilter(action) {
+  activeFilters[action] = !activeFilters[action];
+  const btn = document.querySelector(`.filter-btn.${action}`);
+  btn.classList.toggle('active');
+  render();
+}
+
 // ── Data fetching ────────────────────────────────────────────────────────────
 
 async function loadCache() {
@@ -360,13 +408,36 @@ async function loadCache() {
 function render() {
   const tbody = document.getElementById('tbody');
   if (!walletPositions.length) {
-    tbody.innerHTML = '<tr><td colspan="11" class="loading" style="padding:20px 12px">No staked positions found.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="loading" style="padding:20px 12px">No staked positions found.</td></tr>';
     return;
   }
 
+  // Sort positions
+  let positions = [...walletPositions];
+  if (sortColumn) {
+    positions.sort((a, b) => {
+      const aVal = getSortValue(a, sortColumn);
+      const bVal = getSortValue(b, sortColumn);
+      return sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
+    });
+  }
+
+  // Update sort indicators
+  document.querySelectorAll('.sort-indicator').forEach(el => el.textContent = '');
+  document.querySelectorAll('th.sortable').forEach(el => el.classList.remove('sorted'));
+  if (sortColumn) {
+    const indicator = document.getElementById(`sort-${sortColumn}`);
+    if (indicator) {
+      indicator.textContent = sortDirection === 'asc' ? '▲' : '▼';
+      indicator.closest('th').classList.add('sorted');
+    }
+  }
+
+  // Filter and render
   let totalTao = 0, buys = 0, holds = 0, sells = 0;
   let html = '';
-  walletPositions.forEach((p, idx) => {
+  
+  positions.forEach((p, idx) => {
     totalTao += p.tao_value;
     const pd = poolData[p.netuid] || {};
     const yd = yieldData[p.netuid] || {};
@@ -376,6 +447,9 @@ function render() {
     if (action === 'buy')       buys++;
     else if (action === 'hold') holds++;
     else                        sells++;
+
+    // Skip if filtered out
+    if (!activeFilters[action]) return;
 
     const rowCls = action === 'buy' ? 'buy-row subnet-row' : 'subnet-row';
 
@@ -388,13 +462,12 @@ function render() {
       : '<span style="color:#ccc">—</span>';
 
     const subnetName = pd.name || '';
-
     const validatorCount = p.validators ? p.validators.length : 0;
     const expandId = `validators-${idx}`;
     const iconId = `icon-${idx}`;
 
     const scored = signals.filter(s => s.green !== null);
-    const coverageTip = `${scored.length}/7 signals have data`;
+    const coverageTip = `${scored.length}/5 signals have data`;
 
     html += `<tr class="${rowCls}" onclick="toggleValidators('${expandId}', '${iconId}')">
       <td>
@@ -406,7 +479,6 @@ function render() {
       <td>${priceStr}</td>
       <td>${fmtChange(pd.change_24h)}</td>
       <td>${fmtChange(pd.change_7d)}</td>
-      <td>${fmtChange(pd.change_30d)}</td>
       <td>${fmtApy(yd.seven_day_apy)}</td>
       <td>${emStr}</td>
       <td>${p.alpha_balance.toFixed(4)}</td>
@@ -417,7 +489,7 @@ function render() {
 
     if (p.validators && p.validators.length) {
       html += `<tbody class="validator-rows" id="${expandId}">`;
-      html += `<tr class="validator-row"><td class="validator-label" colspan="11">↳ Validators</td></tr>`;
+      html += `<tr class="validator-row"><td class="validator-label" colspan="10">↳ Validators</td></tr>`;
       p.validators.forEach(v => {
         const vyData = (yd.validators || []).find(yv => yv.hotkey === v.hotkey);
         const vApy = vyData ? fmtApy(vyData.seven_day_apy) : '<span style="color:#ccc">—</span>';
@@ -425,7 +497,7 @@ function render() {
         const name = v.hotkey_name || (v.hotkey ? v.hotkey.slice(0, 12) + '…' : '—');
         html += `<tr class="validator-row">
           <td style="padding-left:28px;color:#555">${name}</td>
-          <td colspan="4" style="color:#aaa;font-size:11px;font-family:monospace">${v.hotkey ? v.hotkey.slice(0,16) + '…' : '—'}</td>
+          <td colspan="3" style="color:#aaa;font-size:11px;font-family:monospace">${v.hotkey ? v.hotkey.slice(0,16) + '…' : '—'}</td>
           <td>${vApy}</td>
           <td style="color:#aaa">—</td>
           <td>${v.alpha_balance.toFixed(4)}</td>
