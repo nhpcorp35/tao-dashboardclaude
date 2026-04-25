@@ -446,7 +446,7 @@ function render() {
   }
 
   // Filter and render
-  let totalTao = 0, buys = 0, holds = 0, sells = 0;
+  let totalTao = 0, buys = 0, holds = 0, watches = 0, sells = 0;
   let html = '';
   
   positions.forEach((p, idx) => {
@@ -458,6 +458,7 @@ function render() {
 
     if (action === 'buy')       buys++;
     else if (action === 'hold') holds++;
+    else if (action === 'watch') watches++;
     else                        sells++;
 
     // Skip if filtered out (activeFilter = null means show all)
@@ -529,7 +530,7 @@ function render() {
   document.getElementById('m-positions').textContent = walletPositions.length;
   document.getElementById('m-buys').textContent = buys;
   document.getElementById('m-holds').textContent = holds;
-  document.getElementById('m-sells').textContent = sells;
+  document.getElementById('m-sells').textContent = watches + sells;
 
   // Portfolio delta
   const yesterdayTotal = getYesterdayTotal();
