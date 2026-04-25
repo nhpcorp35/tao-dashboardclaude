@@ -111,8 +111,7 @@
       <div class="signal-key-item"><div class="dot-num">4</div> TAO flow (positive = green)</div>
       <div class="signal-key-item"><div class="dot-num">5</div> 7d APY (≥20% green, 5–20% grey)</div>
       <div class="signal-key-item"><div class="dot-num">6</div> Best validator rank (top 100)</div>
-      <div class="signal-key-item"><div class="dot-num">7</div> Alpha price direction</div>
-      <div class="signal-key-item"><div class="dot-num">8</div> Position size (≥0.1τ green)</div>
+      <div class="signal-key-item"><div class="dot-num">7</div> Position size (≥0.1τ green)</div>
     </div>
   </div>
 
@@ -247,11 +246,6 @@ function evalSignals(p) {
       })(),
     },
     {
-      label: 'Alpha price direction',
-      value: pd.price != null ? `τ${parseFloat(pd.price).toFixed(5)}` : 'No data',
-      green: pd.change_7d != null ? pd.change_7d > 0 : null,
-    },
-    {
       label: 'Position TAO value',
       value: `τ${p.tao_value.toFixed(4)}`,
       green: p.tao_value >= 0.1,
@@ -376,7 +370,7 @@ function render() {
     const iconId = `icon-${idx}`;
 
     const scored = signals.filter(s => s.green !== null);
-    const coverageTip = `${scored.length}/8 signals have data`;
+    const coverageTip = `${scored.length}/7 signals have data`;
 
     html += `<tr class="${rowCls}" onclick="toggleValidators('${expandId}', '${iconId}')">
       <td>

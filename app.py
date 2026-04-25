@@ -2,7 +2,7 @@ import os
 import time
 import threading
 import requests
-from flask import Flask, jsonify, send_from_directory
+from flask import Flask, jsonify, send_from_directory, request
 from flask_cors import CORS
 from collections import defaultdict
 
@@ -15,8 +15,10 @@ COLDKEY = os.environ.get("COLDKEY", "5Cexeg7deNSTzsqMKuBmvc9JHGHymuL4SdjAA9Jw4ee
 HEADERS = {"Authorization": TAOSTATS_API_KEY}
 
 # Rate limit: 5 req/min → 1 request every 13s to be safe
-REQUEST_GAP = 13  # seconds between TaoStats API calls
-CACHE_TTL = 15 * 60  # refresh cache every 15 minutes
+REQUEST_GAP = 13          # seconds between TaoStats API calls
+CACHE_TTL = 15 * 60       # refresh cache every 15 minutes
+MAX_RETRIES = 3           # retries on 429 or transient errors
+RETRY_BACKOFF = 30        # seconds for first retry; doubled each subsequent attempt
 
 # ── In-memory cache ───────────────────────────────────────────────────────────
 _cache = {
@@ -24,9 +26,13 @@ _cache = {
     "pool": {},
     "yield": {},
     "flow": {},
+    "pool_updated": {},     # netuid -> unix ts of last successful pool cache
+    "yield_updated": {},    # netuid -> unix ts of last successful yield cache
+    "flow_updated": {},     # netuid -> unix ts of last successful flow cache
     "last_updated": None,
-    "status": "pending",  # "pending" | "refreshing" | "ready" | "error"
+    "status": "pending",    # "pending" | "refreshing" | "ready" | "error"
     "error": None,
+    "fetch_errors": {},     # "kind:netuid" -> last error message; cleared on success
 }
 _cache_lock = threading.Lock()
 
@@ -48,10 +54,43 @@ def safe_float(v):
         return None
 
 
-def taostats_get(url):
-    r = requests.get(url, headers=HEADERS, timeout=15)
-    r.raise_for_status()
-    return r.json()
+def taostats_get(url, max_retries=MAX_RETRIES):
+    """
+    GET against TaoStats with retry-on-429 and exponential backoff.
+    Retries 429 and connection errors up to max_retries times.
+    Raises on final failure so callers can record per-subnet errors.
+    """
+    last_err = None
+    for attempt in range(max_retries + 1):
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=20)
+            if r.status_code == 429:
+                if attempt < max_retries:
+                    wait = RETRY_BACKOFF * (2 ** attempt)
+                    app.logger.warning(
+                        "Rate limited on %s — backing off %ds (attempt %d/%d)",
+                        url, wait, attempt + 1, max_retries
+                    )
+                    time.sleep(wait)
+                    continue
+                raise requests.HTTPError(f"429 Rate Limited after {max_retries} retries")
+            r.raise_for_status()
+            return r.json()
+        except requests.RequestException as e:
+            last_err = e
+            # Retry only on connection-level errors and 5xx, not 4xx (other than 429 above)
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            retryable = status is None or status >= 500
+            if retryable and attempt < max_retries:
+                wait = RETRY_BACKOFF * (2 ** attempt)
+                app.logger.warning(
+                    "Request error on %s: %s — retrying in %ds (attempt %d/%d)",
+                    url, e, wait, attempt + 1, max_retries
+                )
+                time.sleep(wait)
+                continue
+            raise
+    raise last_err  # pragma: no cover
 
 
 # ── Data parsers ──────────────────────────────────────────────────────────────
@@ -152,10 +191,25 @@ def parse_flow(raw, netuid):
 
 # ── Background prefetch ───────────────────────────────────────────────────────
 
+def _record_error(kind, netuid, exc):
+    """Record a per-subnet fetch error in the cache."""
+    err_msg = f"{type(exc).__name__}: {exc}"
+    with _cache_lock:
+        _cache["fetch_errors"][f"{kind}:{netuid}"] = err_msg
+    app.logger.warning("SN%s %s error: %s", netuid, kind, err_msg)
+
+
+def _clear_error(kind, netuid):
+    with _cache_lock:
+        _cache["fetch_errors"].pop(f"{kind}:{netuid}", None)
+
+
 def fetch_all_data():
     """
     Fetches wallet + all subnet data one request at a time with REQUEST_GAP
     delays to respect TaoStats 5 req/min rate limit. Updates cache incrementally.
+    Per-subnet failures are recorded in fetch_errors but don't abort the cycle —
+    previously cached values are retained for failed subnets.
     """
     app.logger.info("Cache refresh starting...")
     with _cache_lock:
@@ -171,7 +225,7 @@ def fetch_all_data():
         netuids = [p["netuid"] for p in positions if p["tao_value"] > 0.0001]
         with _cache_lock:
             _cache["wallet"] = positions
-        app.logger.info("Wallet cached: %d positions", len(netuids))
+        app.logger.info("Wallet cached: %d positions: %s", len(netuids), netuids)
 
         # 2. Per-subnet: pool, yield (paginated), flow — one request at a time
         for netuid in netuids:
@@ -182,9 +236,11 @@ def fetch_all_data():
                 raw = taostats_get(f"{TAOSTATS_BASE}/api/dtao/pool/latest/v1?netuid={netuid}")
                 with _cache_lock:
                     _cache["pool"][netuid] = parse_pool(raw, netuid)
+                    _cache["pool_updated"][netuid] = time.time()
+                _clear_error("pool", netuid)
                 app.logger.info("SN%s pool OK", netuid)
             except Exception as e:
-                app.logger.warning("SN%s pool error: %s", netuid, e)
+                _record_error("pool", netuid, e)
 
             # Yield (paginated — each page is one request)
             time.sleep(REQUEST_GAP)
@@ -209,9 +265,11 @@ def fetch_all_data():
                     time.sleep(REQUEST_GAP)
                 with _cache_lock:
                     _cache["yield"][netuid] = parse_yield(yield_data, netuid)
+                    _cache["yield_updated"][netuid] = time.time()
+                _clear_error("yield", netuid)
                 app.logger.info("SN%s yield OK (%d validators)", netuid, len(yield_data))
             except Exception as e:
-                app.logger.warning("SN%s yield error: %s", netuid, e)
+                _record_error("yield", netuid, e)
 
             # Flow
             time.sleep(REQUEST_GAP)
@@ -219,14 +277,17 @@ def fetch_all_data():
                 raw = taostats_get(f"{TAOSTATS_BASE}/api/dtao/tao_flow/v1?netuid={netuid}")
                 with _cache_lock:
                     _cache["flow"][netuid] = parse_flow(raw, netuid)
+                    _cache["flow_updated"][netuid] = time.time()
+                _clear_error("flow", netuid)
                 app.logger.info("SN%s flow OK", netuid)
             except Exception as e:
-                app.logger.warning("SN%s flow error: %s", netuid, e)
+                _record_error("flow", netuid, e)
 
         with _cache_lock:
             _cache["last_updated"] = time.time()
             _cache["status"] = "ready"
-        app.logger.info("Cache refresh complete.")
+            err_count = len(_cache["fetch_errors"])
+        app.logger.info("Cache refresh complete. Outstanding errors: %d", err_count)
 
     except Exception as e:
         app.logger.error("Cache refresh failed: %s", e)
@@ -265,6 +326,10 @@ def get_cache():
             "pool": _cache["pool"],
             "yield": _cache["yield"],
             "flow": _cache["flow"],
+            "pool_updated": _cache["pool_updated"],
+            "yield_updated": _cache["yield_updated"],
+            "flow_updated": _cache["flow_updated"],
+            "fetch_errors": _cache["fetch_errors"],
         })
 
 
@@ -279,22 +344,47 @@ def trigger_refresh():
 
 @app.route("/api/debug/<int:netuid>")
 def debug_subnet(netuid):
+    """
+    Show cached data + fetch errors + cache age for a subnet.
+    By default, does NOT hit the live API — that competes with the background
+    refresh for the 5 req/min budget. Pass ?live=1 to opt in to a live pool call.
+    """
     results = {}
-    try:
-        url = f"{TAOSTATS_BASE}/api/dtao/pool/latest/v1?netuid={netuid}"
-        r = requests.get(url, headers=HEADERS, timeout=10)
-        body = r.json()
-        d = body.get("data", body)
-        if isinstance(d, list): d = d[0] if d else {}
-        results["pool"] = {"status": r.status_code, "top_level_keys": list(d.keys()), "body": body}
-    except Exception as e:
-        results["pool"] = {"error": str(e)}
     with _cache_lock:
         results["cached_pool"] = _cache["pool"].get(netuid)
         results["cached_yield"] = _cache["yield"].get(netuid)
         results["cached_flow"] = _cache["flow"].get(netuid)
+        results["pool_updated"] = _cache["pool_updated"].get(netuid)
+        results["yield_updated"] = _cache["yield_updated"].get(netuid)
+        results["flow_updated"] = _cache["flow_updated"].get(netuid)
         results["cache_status"] = _cache["status"]
         results["cache_last_updated"] = _cache["last_updated"]
+        results["fetch_errors"] = {
+            k: v for k, v in _cache["fetch_errors"].items()
+            if k.endswith(f":{netuid}")
+        }
+
+    # Annotate freshness
+    now = time.time()
+    for kind in ("pool", "yield", "flow"):
+        ts = results.get(f"{kind}_updated")
+        results[f"{kind}_age_minutes"] = round((now - ts) / 60, 1) if ts else None
+
+    if request.args.get("live") == "1":
+        try:
+            url = f"{TAOSTATS_BASE}/api/dtao/pool/latest/v1?netuid={netuid}"
+            r = requests.get(url, headers=HEADERS, timeout=10)
+            body = r.json()
+            d = body.get("data", body)
+            if isinstance(d, list):
+                d = d[0] if d else {}
+            results["pool_live"] = {
+                "status": r.status_code,
+                "top_level_keys": list(d.keys()) if isinstance(d, dict) else [],
+                "body": body,
+            }
+        except Exception as e:
+            results["pool_live"] = {"error": str(e)}
     return jsonify(results)
 
 
