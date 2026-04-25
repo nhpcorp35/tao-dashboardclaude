@@ -5,7 +5,6 @@ import requests
 from flask import Flask, jsonify, send_from_directory, request
 from flask_cors import CORS
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 app = Flask(__name__, static_folder="static")
 CORS(app)
@@ -238,7 +237,7 @@ def fetch_subnet_data(netuid):
     """
     Fetch pool, yield, and flow data for a single subnet.
     Returns tuple of (netuid, success_count, error_count).
-    All requests go through rate_limiter, no manual sleeps needed.
+    All requests go through rate_limiter.
     """
     errors = 0
     
@@ -299,18 +298,16 @@ def fetch_subnet_data(netuid):
 
 def fetch_all_data():
     """
-    Fetches wallet + all subnet data with parallel processing.
-    Uses ThreadPoolExecutor to process 2-3 subnets simultaneously while
-    respecting the global 5 req/min rate limit via rate_limiter.
+    Fetches wallet + all subnet data sequentially.
     Per-subnet failures are recorded in fetch_errors but don't abort the cycle.
     """
-    app.logger.info("Cache refresh starting (parallel mode)...")
+    app.logger.info("Cache refresh starting (sequential mode)...")
     with _cache_lock:
         _cache["status"] = "refreshing"
         _cache["error"] = None
 
     try:
-        # 1. Wallet (sequential, single request)
+        # 1. Wallet (single request)
         wallet_raw = taostats_get(
             f"{TAOSTATS_BASE}/api/dtao/stake_balance/latest/v1?coldkey={COLDKEY}&limit=50"
         )
@@ -320,25 +317,14 @@ def fetch_all_data():
             _cache["wallet"] = positions
         app.logger.info("Wallet cached: %d positions: %s", len(netuids), netuids)
 
-        # 2. Per-subnet data (parallel with 3 workers)
-        # Each worker processes one subnet's pool+yield+flow sequence
-        # The global rate_limiter ensures we stay under 5 req/min total
+        # 2. Per-subnet data (sequential)
         total_success = 0
         total_errors = 0
         
-        with ThreadPoolExecutor(max_workers=3) as executor:
-            futures = {executor.submit(fetch_subnet_data, netuid): netuid 
-                      for netuid in netuids}
-            
-            for future in as_completed(futures):
-                netuid = futures[future]
-                try:
-                    _, successes, errors = future.result()
-                    total_success += successes
-                    total_errors += errors
-                except Exception as e:
-                    app.logger.error("SN%s worker failed: %s", netuid, e)
-                    total_errors += 3
+        for netuid in netuids:
+            _, successes, errors = fetch_subnet_data(netuid)
+            total_success += successes
+            total_errors += errors
 
         with _cache_lock:
             _cache["last_updated"] = time.time()
