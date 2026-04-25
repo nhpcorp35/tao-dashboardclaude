@@ -141,10 +141,10 @@
 
   <div class="filter-bar">
     <span class="filter-label">Show:</span>
-    <button class="filter-btn buy active" onclick="toggleFilter('buy')">🔵 Buy</button>
-    <button class="filter-btn hold active" onclick="toggleFilter('hold')">🟢 Hold</button>
-    <button class="filter-btn watch active" onclick="toggleFilter('watch')">🟠 Watch</button>
-    <button class="filter-btn sell active" onclick="toggleFilter('sell')">🔴 Sell</button>
+    <button class="filter-btn buy" onclick="toggleFilter('buy')">🔵 Buy</button>
+    <button class="filter-btn hold" onclick="toggleFilter('hold')">🟢 Hold</button>
+    <button class="filter-btn watch" onclick="toggleFilter('watch')">🟠 Watch</button>
+    <button class="filter-btn sell" onclick="toggleFilter('sell')">🔴 Sell</button>
   </div>
 
   <div class="table-wrap">
@@ -196,8 +196,8 @@ const PORTFOLIO_STORAGE_KEY = 'tao_portfolio_history';
 let sortColumn = null;
 let sortDirection = 'desc';
 
-// Filter state (all active by default)
-let activeFilters = { buy: true, hold: true, watch: true, sell: true };
+// Filter state (null = show all, string = show only that action)
+let activeFilter = null;
 
 // ── Portfolio delta tracking ─────────────────────────────────────────────────
 
@@ -367,9 +367,21 @@ function getSortValue(p, column) {
 // ── Filtering ────────────────────────────────────────────────────────────────
 
 function toggleFilter(action) {
-  activeFilters[action] = !activeFilters[action];
-  const btn = document.querySelector(`.filter-btn.${action}`);
-  btn.classList.toggle('active');
+  // Exclusive filtering: click = show only this, click again = show all
+  if (activeFilter === action) {
+    activeFilter = null; // Clear filter
+  } else {
+    activeFilter = action; // Set this filter only
+  }
+  
+  // Update button states
+  document.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.classList.remove('active');
+  });
+  if (activeFilter) {
+    document.querySelector(`.filter-btn.${activeFilter}`).classList.add('active');
+  }
+  
   render();
 }
 
@@ -448,8 +460,8 @@ function render() {
     else if (action === 'hold') holds++;
     else                        sells++;
 
-    // Skip if filtered out
-    if (!activeFilters[action]) return;
+    // Skip if filtered out (activeFilter = null means show all)
+    if (activeFilter && action !== activeFilter) return;
 
     const rowCls = action === 'buy' ? 'buy-row subnet-row' : 'subnet-row';
 
