@@ -5,6 +5,7 @@ import requests
 from flask import Flask, jsonify, send_from_directory, request
 from flask_cors import CORS
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 app = Flask(__name__, static_folder="static")
 CORS(app)
@@ -37,6 +38,28 @@ _cache = {
 _cache_lock = threading.Lock()
 
 
+# ── Rate Limiter ──────────────────────────────────────────────────────────────
+
+class RateLimiter:
+    """Global rate limiter ensuring no more than 5 requests per minute."""
+    def __init__(self, requests_per_minute):
+        self.min_gap = 60.0 / requests_per_minute  # 12 seconds for 5 req/min
+        self.last_request_time = 0
+        self.lock = threading.Lock()
+    
+    def wait_and_acquire(self):
+        """Block until enough time has passed since last request, then proceed."""
+        with self.lock:
+            now = time.time()
+            elapsed = now - self.last_request_time
+            if elapsed < self.min_gap:
+                wait_time = self.min_gap - elapsed
+                time.sleep(wait_time)
+            self.last_request_time = time.time()
+
+rate_limiter = RateLimiter(5)  # 5 requests per minute
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def first_val(d, *keys, default=None):
@@ -57,12 +80,16 @@ def safe_float(v):
 def taostats_get(url, max_retries=MAX_RETRIES):
     """
     GET against TaoStats with retry-on-429 and exponential backoff.
+    Uses global rate_limiter to enforce 5 req/min across all threads.
     Retries 429 and connection errors up to max_retries times.
     Raises on final failure so callers can record per-subnet errors.
     """
     last_err = None
     for attempt in range(max_retries + 1):
         try:
+            # Wait for rate limit before making request
+            rate_limiter.wait_and_acquire()
+            
             r = requests.get(url, headers=HEADERS, timeout=20)
             if r.status_code == 429:
                 if attempt < max_retries:
@@ -207,20 +234,83 @@ def _clear_error(kind, netuid):
         _cache["fetch_errors"].pop(f"{kind}:{netuid}", None)
 
 
+def fetch_subnet_data(netuid):
+    """
+    Fetch pool, yield, and flow data for a single subnet.
+    Returns tuple of (netuid, success_count, error_count).
+    All requests go through rate_limiter, no manual sleeps needed.
+    """
+    errors = 0
+    
+    # Pool
+    try:
+        raw = taostats_get(f"{TAOSTATS_BASE}/api/dtao/pool/latest/v1?netuid={netuid}")
+        with _cache_lock:
+            _cache["pool"][netuid] = parse_pool(raw, netuid)
+            _cache["pool_updated"][netuid] = time.time()
+        _clear_error("pool", netuid)
+        app.logger.info("SN%s pool OK", netuid)
+    except Exception as e:
+        _record_error("pool", netuid, e)
+        errors += 1
+
+    # Yield (paginated)
+    try:
+        yield_data = []
+        page = 1
+        while True:
+            raw = taostats_get(
+                f"{TAOSTATS_BASE}/api/dtao/validator/yield/latest/v1"
+                f"?netuid={netuid}&page={page}&limit=50"
+            )
+            page_data = raw.get("data", [])
+            if isinstance(page_data, dict) and "results" in page_data:
+                page_data = page_data["results"]
+            if not isinstance(page_data, list):
+                page_data = []
+            yield_data.extend(page_data)
+            pagination = raw.get("pagination", {})
+            if pagination.get("next_page") is None or page >= 5:
+                break
+            page += 1
+        with _cache_lock:
+            _cache["yield"][netuid] = parse_yield(yield_data, netuid)
+            _cache["yield_updated"][netuid] = time.time()
+        _clear_error("yield", netuid)
+        app.logger.info("SN%s yield OK (%d validators)", netuid, len(yield_data))
+    except Exception as e:
+        _record_error("yield", netuid, e)
+        errors += 1
+
+    # Flow
+    try:
+        raw = taostats_get(f"{TAOSTATS_BASE}/api/dtao/tao_flow/v1?netuid={netuid}")
+        with _cache_lock:
+            _cache["flow"][netuid] = parse_flow(raw, netuid)
+            _cache["flow_updated"][netuid] = time.time()
+        _clear_error("flow", netuid)
+        app.logger.info("SN%s flow OK", netuid)
+    except Exception as e:
+        _record_error("flow", netuid, e)
+        errors += 1
+    
+    return (netuid, 3 - errors, errors)
+
+
 def fetch_all_data():
     """
-    Fetches wallet + all subnet data one request at a time with REQUEST_GAP
-    delays to respect TaoStats 5 req/min rate limit. Updates cache incrementally.
-    Per-subnet failures are recorded in fetch_errors but don't abort the cycle —
-    previously cached values are retained for failed subnets.
+    Fetches wallet + all subnet data with parallel processing.
+    Uses ThreadPoolExecutor to process 2-3 subnets simultaneously while
+    respecting the global 5 req/min rate limit via rate_limiter.
+    Per-subnet failures are recorded in fetch_errors but don't abort the cycle.
     """
-    app.logger.info("Cache refresh starting...")
+    app.logger.info("Cache refresh starting (parallel mode)...")
     with _cache_lock:
         _cache["status"] = "refreshing"
         _cache["error"] = None
 
     try:
-        # 1. Wallet
+        # 1. Wallet (sequential, single request)
         wallet_raw = taostats_get(
             f"{TAOSTATS_BASE}/api/dtao/stake_balance/latest/v1?coldkey={COLDKEY}&limit=50"
         )
@@ -230,67 +320,35 @@ def fetch_all_data():
             _cache["wallet"] = positions
         app.logger.info("Wallet cached: %d positions: %s", len(netuids), netuids)
 
-        # 2. Per-subnet: pool, yield (paginated), flow — one request at a time
-        for netuid in netuids:
-
-            # Pool
-            time.sleep(REQUEST_GAP)
-            try:
-                raw = taostats_get(f"{TAOSTATS_BASE}/api/dtao/pool/latest/v1?netuid={netuid}")
-                with _cache_lock:
-                    _cache["pool"][netuid] = parse_pool(raw, netuid)
-                    _cache["pool_updated"][netuid] = time.time()
-                _clear_error("pool", netuid)
-                app.logger.info("SN%s pool OK", netuid)
-            except Exception as e:
-                _record_error("pool", netuid, e)
-
-            # Yield (paginated — each page is one request)
-            time.sleep(REQUEST_GAP)
-            try:
-                yield_data = []
-                page = 1
-                while True:
-                    raw = taostats_get(
-                        f"{TAOSTATS_BASE}/api/dtao/validator/yield/latest/v1"
-                        f"?netuid={netuid}&page={page}&limit=50"
-                    )
-                    page_data = raw.get("data", [])
-                    if isinstance(page_data, dict) and "results" in page_data:
-                        page_data = page_data["results"]
-                    if not isinstance(page_data, list):
-                        page_data = []
-                    yield_data.extend(page_data)
-                    pagination = raw.get("pagination", {})
-                    if pagination.get("next_page") is None or page >= 5:
-                        break
-                    page += 1
-                    time.sleep(REQUEST_GAP)
-                with _cache_lock:
-                    _cache["yield"][netuid] = parse_yield(yield_data, netuid)
-                    _cache["yield_updated"][netuid] = time.time()
-                _clear_error("yield", netuid)
-                app.logger.info("SN%s yield OK (%d validators)", netuid, len(yield_data))
-            except Exception as e:
-                _record_error("yield", netuid, e)
-
-            # Flow
-            time.sleep(REQUEST_GAP)
-            try:
-                raw = taostats_get(f"{TAOSTATS_BASE}/api/dtao/tao_flow/v1?netuid={netuid}")
-                with _cache_lock:
-                    _cache["flow"][netuid] = parse_flow(raw, netuid)
-                    _cache["flow_updated"][netuid] = time.time()
-                _clear_error("flow", netuid)
-                app.logger.info("SN%s flow OK", netuid)
-            except Exception as e:
-                _record_error("flow", netuid, e)
+        # 2. Per-subnet data (parallel with 3 workers)
+        # Each worker processes one subnet's pool+yield+flow sequence
+        # The global rate_limiter ensures we stay under 5 req/min total
+        total_success = 0
+        total_errors = 0
+        
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = {executor.submit(fetch_subnet_data, netuid): netuid 
+                      for netuid in netuids}
+            
+            for future in as_completed(futures):
+                netuid = futures[future]
+                try:
+                    _, successes, errors = future.result()
+                    total_success += successes
+                    total_errors += errors
+                except Exception as e:
+                    app.logger.error("SN%s worker failed: %s", netuid, e)
+                    total_errors += 3
 
         with _cache_lock:
             _cache["last_updated"] = time.time()
             _cache["status"] = "ready"
             err_count = len(_cache["fetch_errors"])
-        app.logger.info("Cache refresh complete. Outstanding errors: %d", err_count)
+        
+        app.logger.info(
+            "Cache refresh complete. Requests: %d OK, %d failed. Outstanding errors: %d",
+            total_success, total_errors, err_count
+        )
 
     except Exception as e:
         app.logger.error("Cache refresh failed: %s", e)
