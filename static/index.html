@@ -567,7 +567,13 @@ function render() {
     const delta = totalTao - yesterdayTotal;
     const pct = ((delta / yesterdayTotal) * 100);
     deltaEl.innerHTML = `<span class="${delta >= 0 ? 'green' : 'red'}">${delta >= 0 ? '+' : ''}τ${delta.toFixed(3)}</span>`;
-    deltaSubEl.textContent = `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}% vs yesterday`;
+    
+    // Get yesterday's date
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = `${yesterday.getMonth() + 1}/${yesterday.getDate()}`;
+    
+    deltaSubEl.textContent = `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}% vs yesterday (${yesterdayStr})`;
   } else {
     deltaEl.textContent = '—';
     deltaSubEl.textContent = 'no baseline yet';
