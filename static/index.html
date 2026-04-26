@@ -135,13 +135,13 @@
   </div>
 
   <div class="rec-risk" id="rec-risk" style="display:none;">
-    <div class="rec-label">Highest Risk Position</div>
+    <div class="rec-label">Biggest Risk</div>
     <div class="rec-main" id="risk-main">—</div>
     <div class="rec-reason" id="risk-reason">—</div>
   </div>
 
   <div class="rec-move" id="rec-move" style="display:none;">
-    <div class="rec-label">Suggested Move Today</div>
+    <div class="rec-label">Today's Move</div>
     <div class="rec-main" id="move-main">—</div>
     <div class="rec-reason" id="move-reason">—</div>
   </div>
@@ -541,8 +541,14 @@ function renderSuggestedMove() {
   const fromPos = sellPositions[0];
   const toPos = buyPositions[0];
   
-  // Calculate suggested amount (15% of from position, rounded to nearest 0.5)
-  const suggestedAmount = Math.round((fromPos.tao_value * 0.15) * 2) / 2;
+  // Calculate suggested amount (15% of from position, minimum 0.1 TAO)
+  let suggestedAmount = Math.round((fromPos.tao_value * 0.15) * 10) / 10;
+  
+  // Don't show if amount is below meaningful threshold
+  if (suggestedAmount < 0.1) {
+    moveEl.style.display = 'none';
+    return;
+  }
   
   // Build comparison reasons
   const reasons = [];
