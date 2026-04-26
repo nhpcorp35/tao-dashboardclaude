@@ -84,7 +84,7 @@
 <div class="container">
   <h1>TAO Subnet Dashboard</h1>
   <div class="wallet-addr" id="wallet-addr">loading...</div>
-  <div id="root-info" style="font-size: 13px; color: #666; margin-bottom: 2rem; display: none;"></div>
+  <div id="root-info" style="font-size: 15px; font-weight: 600; color: #2563eb; margin-bottom: 2rem; display: none;"></div>
   <div class="status-bar" id="status-bar">Fetching data...</div>
 
   <div class="metric-grid">
@@ -431,7 +431,7 @@ function render() {
   if (rootPosition) {
     const validatorCount = rootPosition.validators ? rootPosition.validators.length : 0;
     const validatorText = validatorCount > 1 ? `${validatorCount} validators` : '1 validator';
-    rootInfoEl.innerHTML = `Root subnet (SN0): τ${rootPosition.tao_value.toFixed(4)} staked · ${validatorText}`;
+    rootInfoEl.innerHTML = `🔐 Root subnet (SN0): τ${rootPosition.tao_value.toFixed(4)} staked · ${validatorText}`;
     rootInfoEl.style.display = 'block';
   } else {
     rootInfoEl.style.display = 'none';
