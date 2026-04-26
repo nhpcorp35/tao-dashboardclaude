@@ -221,15 +221,53 @@ def parse_flow(raw, netuid):
 
 
 def fetch_tao_price():
-    """Fetch current TAO/USD price from TaoStats."""
+    """Fetch current TAO/USD price from TaoStats or fallback to CoinGecko."""
     try:
-        # TaoStats has a price endpoint that returns TAO price
-        raw = taostats_get(f"{TAOSTATS_BASE}/api/price/latest/v1")
-        data = raw.get("data", raw)
-        if isinstance(data, dict):
-            price = safe_float(data.get("price") or data.get("usd_price") or data.get("tao_price"))
-            return price
+        # Try multiple possible TaoStats endpoints
+        endpoints = [
+            f"{TAOSTATS_BASE}/api/price/latest/v1",
+            f"{TAOSTATS_BASE}/api/tao/price/v1",
+            f"{TAOSTATS_BASE}/api/price/v1",
+        ]
+        
+        for endpoint in endpoints:
+            try:
+                raw = taostats_get(endpoint)
+                data = raw.get("data", raw)
+                
+                # Try multiple possible field names
+                price = safe_float(
+                    data.get("price") or 
+                    data.get("usd_price") or 
+                    data.get("tao_price") or
+                    data.get("usd") or
+                    data.get("price_usd")
+                )
+                
+                if price and price > 0:
+                    app.logger.info("TAO price fetched from %s: $%.2f", endpoint, price)
+                    return price
+            except Exception as e:
+                app.logger.debug("Failed to fetch TAO price from %s: %s", endpoint, e)
+                continue
+        
+        # Fallback to CoinGecko (free, no auth required)
+        try:
+            cg_url = "https://api.coingecko.com/api/v3/simple/price?ids=bittensor&vs_currencies=usd"
+            r = requests.get(cg_url, timeout=5)
+            if r.status_code == 200:
+                data = r.json()
+                price = data.get("bittensor", {}).get("usd")
+                if price:
+                    app.logger.info("TAO price fetched from CoinGecko: $%.2f", price)
+                    return price
+        except Exception as e:
+            app.logger.debug("CoinGecko fallback failed: %s", e)
+        
+        # If all methods fail
+        app.logger.warning("Could not fetch TAO price from any source")
         return None
+        
     except Exception as e:
         app.logger.warning("Failed to fetch TAO price: %s", e)
         return None
