@@ -413,12 +413,28 @@ function renderRecommendation() {
   
   const top = scored[0];
   
-  // Build reason string
+  // Build weighted reasons - prioritize by signal weight
+  const greenSignals = top.signals
+    .filter(s => s.green === true)
+    .sort((a, b) => b.weight - a.weight); // Sort by weight descending
+  
+  const reasonMap = {
+    'TAO flow': top.flow != null && top.flow > 0 ? 'positive TAO flow' : null,
+    '7d APY': top.apy != null && top.apy >= 20 ? `strong APY (${top.apy.toFixed(1)}%)` : null,
+    'Root emission share': top.emission != null && top.emission >= 1 ? `high root share (${top.emission.toFixed(1)}%)` : null,
+    '30d price change': top.change7d != null && top.change7d > 3 ? `strong 7d trend (+${top.change7d.toFixed(1)}%)` : null,
+    '7d price change': top.change7d != null && top.change7d > 0 ? `positive 7d trend (+${top.change7d.toFixed(1)}%)` : null
+  };
+  
   const reasons = [];
-  if (top.apy && top.apy >= 20) reasons.push(`strong APY (${top.apy.toFixed(1)}%)`);
-  if (top.emission && top.emission >= 1) reasons.push(`high root share (${top.emission.toFixed(1)}%)`);
-  if (top.change7d && top.change7d > 0) reasons.push(`positive 7d trend (+${top.change7d.toFixed(1)}%)`);
-  if (top.flow && top.flow > 0) reasons.push(`positive TAO flow`);
+  for (const signal of greenSignals) {
+    const reason = reasonMap[signal.label];
+    if (reason) {
+      reasons.push(reason);
+      if (reasons.length >= 4) break; // Max 4 reasons, weighted by importance
+    }
+  }
+  
   if (reasons.length === 0) reasons.push(`${top.greenCount}/5 signals green`);
   
   const reasonStr = 'Reason: ' + reasons.join(', ');
@@ -456,11 +472,12 @@ function renderRiskPosition() {
         action,
         redCount,
         greenCount,
+        signals,
         apy: yd.seven_day_apy,
         change7d: pd.change_7d,
         change30d: pd.change_30d,
-        flow: flowData[p.netuid]?.flow,
-        signals
+        emission: pd.emission_pct,
+        flow: flowData[p.netuid]?.flow
       };
     })
     .filter(x => x.action === 'sell' || x.action === 'watch') // Only consider weak positions
@@ -477,12 +494,28 @@ function renderRiskPosition() {
   
   const worst = scored[0];
   
-  // Build reason string
+  // Build weighted reasons - prioritize by signal weight
+  const redSignals = worst.signals
+    .filter(s => s.green === false)
+    .sort((a, b) => b.weight - a.weight); // Sort by weight descending
+  
+  const reasonMap = {
+    'TAO flow': worst.flow != null && worst.flow < 0 ? 'weak flow' : null,
+    '7d APY': worst.apy != null && worst.apy < 20 ? `low APY (${worst.apy.toFixed(1)}%)` : null,
+    'Root emission share': worst.emission != null && worst.emission < 1 ? 'low root share' : null,
+    '30d price change': worst.change30d != null && worst.change30d < -5 ? 'deteriorating 30d trend' : null,
+    '7d price change': worst.change7d != null && worst.change7d < -3 ? 'declining 7d price' : null
+  };
+  
   const reasons = [];
-  if (worst.flow && worst.flow < 0) reasons.push('weak flow');
-  if (worst.apy && worst.apy < 20) reasons.push(`low APY (${worst.apy.toFixed(1)}%)`);
-  if (worst.change30d && worst.change30d < -5) reasons.push('deteriorating 30d trend');
-  if (worst.change7d && worst.change7d < -3) reasons.push('declining 7d price');
+  for (const signal of redSignals) {
+    const reason = reasonMap[signal.label];
+    if (reason) {
+      reasons.push(reason);
+      if (reasons.length >= 3) break; // Max 3 reasons, weighted by importance
+    }
+  }
+  
   if (reasons.length === 0) reasons.push(`${worst.redCount}/5 signals red`);
   
   const reasonStr = 'Reason: ' + reasons.join(', ');
@@ -577,33 +610,60 @@ function renderSuggestedMove() {
     return;
   }
   
-  // Build comparison reasons
+  // Build weighted comparison reasons - prioritize by signal importance
+  const comparisons = [
+    {
+      weight: 30,
+      check: () => {
+        if (toPos.flow != null && fromPos.flow != null) {
+          if (toPos.flow > 0 && fromPos.flow < 0) return 'positive vs negative flow';
+          if (toPos.flow > fromPos.flow + 1) return 'better TAO flow';
+        }
+        return null;
+      }
+    },
+    {
+      weight: 25,
+      check: () => {
+        if (toPos.apy != null && fromPos.apy != null) {
+          const apyDiff = toPos.apy - fromPos.apy;
+          if (apyDiff > 5) return `higher APY (+${apyDiff.toFixed(1)}pp)`;
+        } else if (toPos.apy != null && toPos.apy >= 20) {
+          return `strong APY (${toPos.apy.toFixed(1)}%)`;
+        }
+        return null;
+      }
+    },
+    {
+      weight: 25,
+      check: () => {
+        if (toPos.emission != null && fromPos.emission != null) {
+          if (toPos.emission > fromPos.emission + 0.5) return 'stronger root share';
+        } else if (toPos.emission != null && toPos.emission >= 1) {
+          return 'high root share';
+        }
+        return null;
+      }
+    },
+    {
+      weight: 10,
+      check: () => {
+        if (toPos.change7d != null && fromPos.change7d != null) {
+          if (toPos.change7d > 0 && fromPos.change7d < 0) return 'improving vs declining trend';
+          if (toPos.change7d > fromPos.change7d + 3) return 'better momentum';
+        }
+        return null;
+      }
+    }
+  ];
+  
   const reasons = [];
-  
-  // APY comparison
-  if (toPos.apy && fromPos.apy) {
-    const apyDiff = toPos.apy - fromPos.apy;
-    if (apyDiff > 5) reasons.push(`higher APY (+${apyDiff.toFixed(1)}pp)`);
-  } else if (toPos.apy && toPos.apy >= 20) {
-    reasons.push(`strong APY (${toPos.apy.toFixed(1)}%)`);
-  }
-  
-  // Emission comparison
-  if (toPos.emission && fromPos.emission) {
-    if (toPos.emission > fromPos.emission) reasons.push('stronger root share');
-  } else if (toPos.emission && toPos.emission >= 1) {
-    reasons.push('high root share');
-  }
-  
-  // Trend comparison
-  if (toPos.change7d && fromPos.change7d) {
-    if (toPos.change7d > 0 && fromPos.change7d < 0) reasons.push('improving vs declining trend');
-    else if (toPos.change7d > fromPos.change7d + 3) reasons.push('better momentum');
-  }
-  
-  // Flow comparison
-  if (toPos.flow && fromPos.flow) {
-    if (toPos.flow > 0 && fromPos.flow < 0) reasons.push('positive vs negative flow');
+  for (const comp of comparisons) {
+    const reason = comp.check();
+    if (reason) {
+      reasons.push(reason);
+      if (reasons.length >= 3) break; // Max 3 reasons, weighted by importance
+    }
   }
   
   if (reasons.length === 0) reasons.push('better signals');
