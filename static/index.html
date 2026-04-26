@@ -147,21 +147,21 @@
   </div>
 
   <div class="signal-key">
-    <div class="signal-key-title">Signal dot key — hover dots for detail</div>
+    <div class="signal-key-title">Weighted signal scoring — hover dots for detail</div>
     <div class="signal-key-grid">
-      <div class="signal-key-item"><div class="dot-num">1</div> 7d price change</div>
-      <div class="signal-key-item"><div class="dot-num">2</div> 30d price change</div>
-      <div class="signal-key-item"><div class="dot-num">3</div> Root emission share (≥1% green)</div>
-      <div class="signal-key-item"><div class="dot-num">4</div> TAO flow (positive = green)</div>
-      <div class="signal-key-item"><div class="dot-num">5</div> 7d APY (≥20% green, 5–20% grey)</div>
+      <div class="signal-key-item"><div class="dot-num">1</div> 7d price change (10%)</div>
+      <div class="signal-key-item"><div class="dot-num">2</div> 30d price change (10%)</div>
+      <div class="signal-key-item"><div class="dot-num">3</div> Root emission share (25%)</div>
+      <div class="signal-key-item"><div class="dot-num">4</div> TAO flow (30%)</div>
+      <div class="signal-key-item"><div class="dot-num">5</div> 7d APY (25%)</div>
     </div>
   </div>
 
   <div class="legend">
-    <div class="legend-item"><div class="ldot" style="background:#2563eb"></div> <strong>Buy</strong> — ≥75% of scored signals green</div>
-    <div class="legend-item"><div class="ldot" style="background:#16a34a"></div> <strong>Hold</strong> — ≥50% green</div>
-    <div class="legend-item"><div class="ldot" style="background:#d97706"></div> <strong>Watch</strong> — ≥25% green</div>
-    <div class="legend-item"><div class="ldot" style="background:#dc2626"></div> <strong>Sell</strong> — mostly red</div>
+    <div class="legend-item"><div class="ldot" style="background:#2563eb"></div> <strong>Buy</strong> — weighted score >80</div>
+    <div class="legend-item"><div class="ldot" style="background:#16a34a"></div> <strong>Hold</strong> — score 60–80</div>
+    <div class="legend-item"><div class="ldot" style="background:#d97706"></div> <strong>Watch</strong> — score 40–60</div>
+    <div class="legend-item"><div class="ldot" style="background:#dc2626"></div> <strong>Sell</strong> — score <40</div>
     <div class="legend-item"><div class="ldot" style="background:#d1d5db"></div> No data (not counted in score)</div>
   </div>
 
@@ -279,6 +279,7 @@ function evalSignals(p) {
         ? `${pd.change_7d >= 0 ? '+' : ''}${parseFloat(pd.change_7d).toFixed(2)}%`
         : 'No data',
       green: pd.change_7d != null ? pd.change_7d > 0 : null,
+      weight: 10
     },
     {
       label: '30d price change',
@@ -286,6 +287,7 @@ function evalSignals(p) {
         ? `${pd.change_30d >= 0 ? '+' : ''}${parseFloat(pd.change_30d).toFixed(2)}%`
         : 'No data',
       green: pd.change_30d != null ? pd.change_30d > 0 : null,
+      weight: 10
     },
     {
       label: 'Root emission share',
@@ -293,6 +295,7 @@ function evalSignals(p) {
         ? `${parseFloat(pd.emission_pct).toFixed(2)}%`
         : 'No data',
       green: pd.emission_pct != null ? pd.emission_pct >= 1.0 : null,
+      weight: 25
     },
     {
       label: 'TAO flow',
@@ -302,11 +305,13 @@ function evalSignals(p) {
             : `${parseFloat(fd.flow_ema).toFixed(1)} TAO outflow`)
         : 'No data',
       green: fd.flow_ema != null ? parseFloat(fd.flow_ema) >= 0 : null,
+      weight: 30
     },
     {
       label: '7d APY',
       value: apy != null ? `${apy.toFixed(1)}%` : 'No data',
       green: apyGreen(apy),
+      weight: 25
     },
   ];
 
@@ -314,13 +319,30 @@ function evalSignals(p) {
 }
 
 function getAction(signals) {
-  const scored = signals.filter(s => s.green !== null);
-  if (scored.length < 2) return 'watch';
-  const greens = scored.filter(s => s.green).length;
-  const ratio = greens / scored.length;
-  if (ratio >= 0.75) return 'buy';
-  if (ratio >= 0.50) return 'hold';
-  if (ratio >= 0.25) return 'watch';
+  // Calculate weighted score (0-100)
+  let totalWeight = 0;
+  let weightedScore = 0;
+  
+  signals.forEach(s => {
+    if (s.green !== null) {
+      totalWeight += s.weight;
+      if (s.green) {
+        weightedScore += s.weight;
+      }
+    }
+  });
+  
+  // If less than 2 signals have data, default to watch
+  const scoredCount = signals.filter(s => s.green !== null).length;
+  if (scoredCount < 2) return 'watch';
+  
+  // Calculate percentage score
+  const score = (weightedScore / totalWeight) * 100;
+  
+  // Apply weighted thresholds
+  if (score > 80) return 'buy';
+  if (score >= 60) return 'hold';
+  if (score >= 40) return 'watch';
   return 'sell';
 }
 
