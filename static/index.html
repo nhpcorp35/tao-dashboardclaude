@@ -534,19 +534,24 @@ function renderSuggestedMove() {
     .sort((a, b) => b.redCount - a.redCount);
   
   if (!buyPositions.length || !sellPositions.length) {
-    moveEl.style.display = 'none';
+    // Show "no rebalance needed" if no weak positions or no strong positions
+    moveMain.textContent = 'No rebalance needed today';
+    moveReason.textContent = '';
+    moveEl.style.display = 'block';
     return;
   }
   
   const fromPos = sellPositions[0];
   const toPos = buyPositions[0];
   
-  // Calculate suggested amount (15% of from position, minimum 0.1 TAO)
+  // Calculate suggested amount (15% of from position, minimum 0.5 TAO)
   let suggestedAmount = Math.round((fromPos.tao_value * 0.15) * 10) / 10;
   
-  // Don't show if amount is below meaningful threshold
-  if (suggestedAmount < 0.1) {
-    moveEl.style.display = 'none';
+  // Show "no rebalance needed" if amount is below meaningful threshold
+  if (suggestedAmount < 0.5) {
+    moveMain.textContent = 'No rebalance needed today';
+    moveReason.textContent = '';
+    moveEl.style.display = 'block';
     return;
   }
   
