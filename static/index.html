@@ -84,6 +84,7 @@
 <div class="container">
   <h1>TAO Subnet Dashboard</h1>
   <div class="wallet-addr" id="wallet-addr">loading...</div>
+  <div id="root-info" style="font-size: 13px; color: #666; margin-bottom: 2rem; display: none;"></div>
   <div class="status-bar" id="status-bar">Fetching data...</div>
 
   <div class="metric-grid">
@@ -419,11 +420,27 @@ function render() {
   const tbody = document.getElementById('tbody');
   if (!walletPositions.length) {
     tbody.innerHTML = '<tr><td colspan="10" class="loading" style="padding:20px 12px">No staked positions found.</td></tr>';
+    document.getElementById('root-info').style.display = 'none';
     return;
   }
 
+  // Extract Root (SN0) and display separately
+  const rootPosition = walletPositions.find(p => p.netuid === 0);
+  const rootInfoEl = document.getElementById('root-info');
+  
+  if (rootPosition) {
+    const validatorCount = rootPosition.validators ? rootPosition.validators.length : 0;
+    const validatorText = validatorCount > 1 ? `${validatorCount} validators` : '1 validator';
+    rootInfoEl.innerHTML = `Root subnet (SN0): τ${rootPosition.tao_value.toFixed(4)} staked · ${validatorText}`;
+    rootInfoEl.style.display = 'block';
+  } else {
+    rootInfoEl.style.display = 'none';
+  }
+
+  // Filter out Root from main positions list
+  let positions = walletPositions.filter(p => p.netuid !== 0);
+
   // Sort positions
-  let positions = [...walletPositions];
   if (sortColumn) {
     positions.sort((a, b) => {
       const aVal = getSortValue(a, sortColumn);
@@ -443,9 +460,14 @@ function render() {
     }
   }
 
-  // Filter and render
+  // Filter and render (excluding Root)
   let totalTao = 0, buys = 0, holds = 0, watches = 0, sells = 0;
   let html = '';
+  
+  // Add Root TAO to total if it exists
+  if (rootPosition) {
+    totalTao += rootPosition.tao_value;
+  }
   
   positions.forEach((p, idx) => {
     totalTao += p.tao_value;
@@ -530,9 +552,9 @@ function render() {
 
   tbody.innerHTML = html;
 
-  // Update metrics
+  // Update metrics (excluding Root from position count)
   document.getElementById('m-total').textContent = `τ${totalTao.toFixed(3)}`;
-  document.getElementById('m-positions').textContent = walletPositions.length;
+  document.getElementById('m-positions').textContent = positions.length; // Excluding Root
   document.getElementById('m-buys').textContent = buys;
   document.getElementById('m-holds').textContent = holds;
   document.getElementById('m-sells').textContent = watches + sells;
