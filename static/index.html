@@ -139,6 +139,10 @@
     <div class="legend-item"><div class="ldot" style="background:#d1d5db"></div> No data (not counted in score)</div>
   </div>
 
+  <div class="leaderboard" id="leaderboard" style="font-size: 12px; color: #666; margin-bottom: 16px; line-height: 1.6;">
+    <!-- Populated by JavaScript -->
+  </div>
+
   <div class="filter-bar">
     <span class="filter-label">Show:</span>
     <button class="filter-btn buy" onclick="toggleFilter('buy')">🔵 Buy</button>
@@ -314,6 +318,77 @@ function renderDots(signals) {
     const cls = s.green === null ? 'dot-grey' : s.green ? 'dot-green' : 'dot-red';
     return `<div class="dot ${cls}" title="${i+1}. ${s.label}: ${s.value}"></div>`;
   }).join('') + '</div>';
+}
+
+// ── Leaderboard ──────────────────────────────────────────────────────────────
+
+function renderLeaderboard() {
+  const lbEl = document.getElementById('leaderboard');
+  const positions = walletPositions.filter(p => p.netuid !== 0);
+  
+  if (!positions.length) {
+    lbEl.innerHTML = '';
+    return;
+  }
+  
+  // Top Gainers (7d)
+  const gainers = positions
+    .map(p => ({
+      netuid: p.netuid,
+      name: (poolData[p.netuid]?.name || '').slice(0, 15),
+      change: poolData[p.netuid]?.change_7d
+    }))
+    .filter(x => x.change != null)
+    .sort((a, b) => b.change - a.change)
+    .slice(0, 3);
+  
+  // Highest APY
+  const apyLeaders = positions
+    .map(p => ({
+      netuid: p.netuid,
+      name: (poolData[p.netuid]?.name || '').slice(0, 15),
+      apy: yieldData[p.netuid]?.seven_day_apy
+    }))
+    .filter(x => x.apy != null)
+    .sort((a, b) => b.apy - a.apy)
+    .slice(0, 3);
+  
+  // Most Emissions
+  const emissionLeaders = positions
+    .map(p => ({
+      netuid: p.netuid,
+      name: (poolData[p.netuid]?.name || '').slice(0, 15),
+      emission: poolData[p.netuid]?.emission_pct
+    }))
+    .filter(x => x.emission != null)
+    .sort((a, b) => b.emission - a.emission)
+    .slice(0, 3);
+  
+  // Format lines
+  const lines = [];
+  
+  if (gainers.length) {
+    const gainersStr = gainers.map(x => 
+      `<a href="https://taostats.io/subnet/${x.netuid}" target="_blank" rel="noopener" style="color:#16a34a;text-decoration:none;font-weight:600;">SN${x.netuid}</a> <span style="color:#16a34a;">(+${x.change.toFixed(1)}%)</span>`
+    ).join(' · ');
+    lines.push(`🏆 Top Gainers (7d): ${gainersStr}`);
+  }
+  
+  if (apyLeaders.length) {
+    const apyStr = apyLeaders.map(x => 
+      `<a href="https://taostats.io/subnet/${x.netuid}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;font-weight:600;">SN${x.netuid}</a> <span style="color:#555;">(${x.apy.toFixed(1)}%)</span>`
+    ).join(' · ');
+    lines.push(`💰 Highest APY: ${apyStr}`);
+  }
+  
+  if (emissionLeaders.length) {
+    const emStr = emissionLeaders.map(x => 
+      `<a href="https://taostats.io/subnet/${x.netuid}" target="_blank" rel="noopener" style="color:#d97706;text-decoration:none;font-weight:600;">SN${x.netuid}</a> <span style="color:#555;">(${x.emission.toFixed(1)}%)</span>`
+    ).join(' · ');
+    lines.push(`📡 Most Emissions: ${emStr}`);
+  }
+  
+  lbEl.innerHTML = lines.join('<br>');
 }
 
 // ── Formatting helpers ───────────────────────────────────────────────────────
@@ -608,6 +683,8 @@ function render() {
   savePortfolioSnapshot(totalTao);
 
   document.getElementById('last-updated').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+  
+  renderLeaderboard();
 }
 
 function toggleValidators(expandId, iconId) {
