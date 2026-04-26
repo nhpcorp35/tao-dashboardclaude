@@ -331,64 +331,49 @@ function renderLeaderboard() {
     return;
   }
   
-  // Top Gainers (7d)
-  const gainers = positions
+  // Top Gainer (7d)
+  const topGainer = positions
     .map(p => ({
       netuid: p.netuid,
-      name: (poolData[p.netuid]?.name || '').slice(0, 15),
       change: poolData[p.netuid]?.change_7d
     }))
     .filter(x => x.change != null)
-    .sort((a, b) => b.change - a.change)
-    .slice(0, 3);
+    .sort((a, b) => b.change - a.change)[0];
   
   // Highest APY
-  const apyLeaders = positions
+  const topApy = positions
     .map(p => ({
       netuid: p.netuid,
-      name: (poolData[p.netuid]?.name || '').slice(0, 15),
       apy: yieldData[p.netuid]?.seven_day_apy
     }))
     .filter(x => x.apy != null)
-    .sort((a, b) => b.apy - a.apy)
-    .slice(0, 3);
+    .sort((a, b) => b.apy - a.apy)[0];
   
   // Most Emissions
-  const emissionLeaders = positions
+  const topEmission = positions
     .map(p => ({
       netuid: p.netuid,
-      name: (poolData[p.netuid]?.name || '').slice(0, 15),
       emission: poolData[p.netuid]?.emission_pct
     }))
     .filter(x => x.emission != null)
-    .sort((a, b) => b.emission - a.emission)
-    .slice(0, 3);
+    .sort((a, b) => b.emission - a.emission)[0];
   
-  // Format lines
-  const lines = [];
+  // Build single line
+  const parts = [];
   
-  if (gainers.length) {
-    const gainersStr = gainers.map(x => 
-      `<a href="https://taostats.io/subnet/${x.netuid}" target="_blank" rel="noopener" style="color:#16a34a;text-decoration:none;font-weight:600;">SN${x.netuid}</a> <span style="color:#16a34a;">(+${x.change.toFixed(1)}%)</span>`
-    ).join(' · ');
-    lines.push(`🏆 Top Gainers (7d): ${gainersStr}`);
+  if (topGainer) {
+    parts.push(`🏆 <a href="https://taostats.io/subnet/${topGainer.netuid}" target="_blank" rel="noopener" style="color:#16a34a;text-decoration:none;font-weight:600;">SN${topGainer.netuid}</a> <span style="color:#16a34a;">(+${topGainer.change.toFixed(1)}%)</span>`);
   }
   
-  if (apyLeaders.length) {
-    const apyStr = apyLeaders.map(x => 
-      `<a href="https://taostats.io/subnet/${x.netuid}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;font-weight:600;">SN${x.netuid}</a> <span style="color:#555;">(${x.apy.toFixed(1)}%)</span>`
-    ).join(' · ');
-    lines.push(`💰 Highest APY: ${apyStr}`);
+  if (topApy) {
+    parts.push(`💰 <a href="https://taostats.io/subnet/${topApy.netuid}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;font-weight:600;">SN${topApy.netuid}</a> <span style="color:#555;">(${topApy.apy.toFixed(1)}%)</span>`);
   }
   
-  if (emissionLeaders.length) {
-    const emStr = emissionLeaders.map(x => 
-      `<a href="https://taostats.io/subnet/${x.netuid}" target="_blank" rel="noopener" style="color:#d97706;text-decoration:none;font-weight:600;">SN${x.netuid}</a> <span style="color:#555;">(${x.emission.toFixed(1)}%)</span>`
-    ).join(' · ');
-    lines.push(`📡 Most Emissions: ${emStr}`);
+  if (topEmission) {
+    parts.push(`📡 <a href="https://taostats.io/subnet/${topEmission.netuid}" target="_blank" rel="noopener" style="color:#d97706;text-decoration:none;font-weight:600;">SN${topEmission.netuid}</a> <span style="color:#555;">(${topEmission.emission.toFixed(1)}%)</span>`);
   }
   
-  lbEl.innerHTML = lines.join('<br>');
+  lbEl.innerHTML = parts.join(' <span style="color:#ccc;">|</span> ');
 }
 
 // ── Formatting helpers ───────────────────────────────────────────────────────
