@@ -84,7 +84,7 @@
 <div class="container">
   <h1>TAO Subnet Dashboard</h1>
   <div class="wallet-addr" id="wallet-addr">loading...</div>
-  <div id="root-info" style="font-size: 15px; font-weight: 600; color: #2563eb; margin-bottom: 2rem; display: none;"></div>
+  <div id="root-info" style="font-size: 13px; font-weight: 500; color: #888; margin-bottom: 2rem; display: none;"></div>
   <div class="status-bar" id="status-bar">Fetching data...</div>
 
   <div class="metric-grid">
@@ -94,7 +94,7 @@
       <div class="metric-sub">across all subnets</div>
     </div>
     <div class="metric-card">
-      <div class="metric-label">Portfolio Δτ (24h)</div>
+      <div class="metric-label">24h Portfolio Change</div>
       <div class="metric-value" id="m-delta">—</div>
       <div class="metric-sub" id="m-delta-sub">vs yesterday</div>
     </div>
@@ -155,11 +155,11 @@
           <th class="sortable" onclick="sortBy('change_24h')">24h % <span class="sort-indicator" id="sort-change_24h"></span></th>
           <th class="sortable" onclick="sortBy('change_7d')">7d % <span class="sort-indicator" id="sort-change_7d"></span></th>
           <th class="sortable" onclick="sortBy('apy')">7d APY <span class="sort-indicator" id="sort-apy"></span></th>
-          <th class="sortable" onclick="sortBy('emission')">Root prop % <span class="sort-indicator" id="sort-emission"></span></th>
+          <th class="sortable" onclick="sortBy('emission')">Root Emission Share <span class="sort-indicator" id="sort-emission"></span></th>
           <th class="sortable" onclick="sortBy('alpha_balance')">Alpha staked <span class="sort-indicator" id="sort-alpha_balance"></span></th>
           <th class="sortable" onclick="sortBy('tao_value')">TAO value <span class="sort-indicator" id="sort-tao_value"></span></th>
           <th class="sortable" onclick="sortBy('action')">Action <span class="sort-indicator" id="sort-action"></span></th>
-          <th>Signals</th>
+          <th>Signals<br><span style="font-size:9px;color:#ccc;font-weight:400;letter-spacing:1px;">1  2  3  4  5</span></th>
         </tr>
       </thead>
       <tbody id="tbody">
