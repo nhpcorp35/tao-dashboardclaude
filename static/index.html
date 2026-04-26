@@ -69,6 +69,12 @@
     .status-bar span { color: #16a34a; }
     .loading { color: #aaa; font-style: italic; }
     .next-refresh { font-size: 11px; color: #bbb; margin-top: 4px; }
+    .recommendation { background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%); border-radius: 12px; padding: 16px 20px; margin-bottom: 2rem; color: #fff; }
+    .rec-label { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #93c5fd; margin-bottom: 6px; }
+    .rec-main { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+    .rec-main a { color: #fff; text-decoration: underline; text-decoration-color: rgba(255,255,255,0.4); }
+    .rec-main a:hover { text-decoration-color: rgba(255,255,255,0.8); }
+    .rec-reason { font-size: 12px; color: #bfdbfe; line-height: 1.5; }
     .signal-key { margin-bottom: 1.5rem; background: #fff; border: 1px solid #e5e5e3; border-radius: 10px; padding: 14px 16px; }
     .signal-key-title { font-size: 11px; font-weight: 600; color: #aaa; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 10px; }
     .signal-key-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 6px 16px; }
@@ -118,6 +124,12 @@
       <div class="metric-value red" id="m-sells">—</div>
       <div class="metric-sub">flagged positions</div>
     </div>
+  </div>
+
+  <div class="recommendation" id="recommendation" style="display:none;">
+    <div class="rec-label">Today's Strongest Add</div>
+    <div class="rec-main" id="rec-main">—</div>
+    <div class="rec-reason" id="rec-reason">—</div>
   </div>
 
   <div class="signal-key">
@@ -314,6 +326,70 @@ function renderDots(signals) {
     const cls = s.green === null ? 'dot-grey' : s.green ? 'dot-green' : 'dot-red';
     return `<div class="dot ${cls}" title="${i+1}. ${s.label}: ${s.value}"></div>`;
   }).join('') + '</div>';
+}
+
+// ── Recommendation ───────────────────────────────────────────────────────────
+
+function renderRecommendation() {
+  const recEl = document.getElementById('recommendation');
+  const recMain = document.getElementById('rec-main');
+  const recReason = document.getElementById('rec-reason');
+  
+  const positions = walletPositions.filter(p => p.netuid !== 0);
+  
+  if (!positions.length) {
+    recEl.style.display = 'none';
+    return;
+  }
+  
+  // Find strongest Buy signal (most green dots + high scores)
+  const scored = positions
+    .map(p => {
+      const pd = poolData[p.netuid] || {};
+      const yd = yieldData[p.netuid] || {};
+      const signals = evalSignals(p);
+      const action = getAction(signals);
+      const greenCount = signals.filter(s => s.green === true).length;
+      
+      return {
+        netuid: p.netuid,
+        name: pd.name || `SN${p.netuid}`,
+        action,
+        greenCount,
+        apy: yd.seven_day_apy,
+        change7d: pd.change_7d,
+        emission: pd.emission_pct,
+        flow: flowData[p.netuid]?.flow,
+        signals
+      };
+    })
+    .filter(x => x.action === 'buy') // Only consider Buy signals
+    .sort((a, b) => {
+      // Sort by green count first, then by APY
+      if (b.greenCount !== a.greenCount) return b.greenCount - a.greenCount;
+      return (b.apy || 0) - (a.apy || 0);
+    });
+  
+  if (!scored.length) {
+    recEl.style.display = 'none';
+    return;
+  }
+  
+  const top = scored[0];
+  
+  // Build reason string
+  const reasons = [];
+  if (top.apy && top.apy >= 20) reasons.push(`strong APY (${top.apy.toFixed(1)}%)`);
+  if (top.emission && top.emission >= 1) reasons.push(`high root share (${top.emission.toFixed(1)}%)`);
+  if (top.change7d && top.change7d > 0) reasons.push(`positive 7d trend (+${top.change7d.toFixed(1)}%)`);
+  if (top.flow && top.flow > 0) reasons.push(`positive TAO flow`);
+  if (reasons.length === 0) reasons.push(`${top.greenCount}/5 signals green`);
+  
+  const reasonStr = 'Reason: ' + reasons.join(', ');
+  
+  recMain.innerHTML = `<a href="https://taostats.io/subnet/${top.netuid}" target="_blank" rel="noopener">SN${top.netuid} — ${top.name}</a>`;
+  recReason.textContent = reasonStr;
+  recEl.style.display = 'block';
 }
 
 // ── Formatting helpers ───────────────────────────────────────────────────────
@@ -608,6 +684,8 @@ function render() {
   savePortfolioSnapshot(totalTao);
 
   document.getElementById('last-updated').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+  
+  renderRecommendation();
 }
 
 function toggleValidators(expandId, iconId) {
