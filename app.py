@@ -5,6 +5,7 @@ import requests
 from flask import Flask, jsonify, send_from_directory, request
 from flask_cors import CORS
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 app = Flask(__name__, static_folder="static")
 CORS(app)
@@ -14,11 +15,11 @@ TAOSTATS_BASE = "https://api.taostats.io"
 COLDKEY = os.environ.get("COLDKEY", "5Cexeg7deNSTzsqMKuBmvc9JHGHymuL4SdjAA9Jw4eeHUphb")
 HEADERS = {"Authorization": TAOSTATS_API_KEY}
 
-# Rate limit: 5 req/min → 1 request every 13s to be safe
-REQUEST_GAP = 13          # seconds between TaoStats API calls
-CACHE_TTL = 15 * 60       # refresh cache every 15 minutes
+# Rate limit: 60 req/min on Standard tier → can make requests much faster
+REQUEST_GAP = 1           # seconds between TaoStats API calls (down from 13)
+CACHE_TTL = 5 * 60        # refresh cache every 5 minutes (down from 15)
 MAX_RETRIES = 3           # retries on 429 or transient errors
-RETRY_BACKOFF = 30        # seconds for first retry; doubled each subsequent attempt
+RETRY_BACKOFF = 10        # seconds for first retry (down from 30)
 
 # ── In-memory cache ───────────────────────────────────────────────────────────
 _cache = {
@@ -40,9 +41,9 @@ _cache_lock = threading.Lock()
 # ── Rate Limiter ──────────────────────────────────────────────────────────────
 
 class RateLimiter:
-    """Global rate limiter ensuring no more than 5 requests per minute."""
+    """Global rate limiter ensuring no more than 60 requests per minute (Standard tier)."""
     def __init__(self, requests_per_minute):
-        self.min_gap = 60.0 / requests_per_minute  # 12 seconds for 5 req/min
+        self.min_gap = 60.0 / requests_per_minute  # 1 second for 60 req/min
         self.last_request_time = 0
         self.lock = threading.Lock()
     
@@ -56,7 +57,7 @@ class RateLimiter:
                 time.sleep(wait_time)
             self.last_request_time = time.time()
 
-rate_limiter = RateLimiter(5)  # 5 requests per minute
+rate_limiter = RateLimiter(60)  # 60 requests per minute (Standard tier)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -298,10 +299,11 @@ def fetch_subnet_data(netuid):
 
 def fetch_all_data():
     """
-    Fetches wallet + all subnet data sequentially.
+    Fetches wallet + all subnet data with parallel processing.
+    With Standard tier (60 req/min), can safely use 5 workers.
     Per-subnet failures are recorded in fetch_errors but don't abort the cycle.
     """
-    app.logger.info("Cache refresh starting (sequential mode)...")
+    app.logger.info("Cache refresh starting (parallel mode with 5 workers)...")
     with _cache_lock:
         _cache["status"] = "refreshing"
         _cache["error"] = None
@@ -317,14 +319,25 @@ def fetch_all_data():
             _cache["wallet"] = positions
         app.logger.info("Wallet cached: %d positions: %s", len(netuids), netuids)
 
-        # 2. Per-subnet data (sequential)
+        # 2. Per-subnet data (parallel with 5 workers)
+        # Each worker processes one subnet's pool+yield+flow sequence
+        # With 60 req/min, 5 workers won't overwhelm the API
         total_success = 0
         total_errors = 0
         
-        for netuid in netuids:
-            _, successes, errors = fetch_subnet_data(netuid)
-            total_success += successes
-            total_errors += errors
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(fetch_subnet_data, netuid): netuid 
+                      for netuid in netuids}
+            
+            for future in as_completed(futures):
+                netuid = futures[future]
+                try:
+                    _, successes, errors = future.result()
+                    total_success += successes
+                    total_errors += errors
+                except Exception as e:
+                    app.logger.error("SN%s worker failed: %s", netuid, e)
+                    total_errors += 3
 
         with _cache_lock:
             _cache["last_updated"] = time.time()
