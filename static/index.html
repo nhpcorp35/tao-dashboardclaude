@@ -29,8 +29,7 @@
     .filter-btn.active { border-color: currentColor; font-weight: 500; }
     .filter-btn.buy.active { background: #eff6ff; color: #1d4ed8; border-color: #1d4ed8; }
     .filter-btn.hold.active { background: #f0fdf4; color: #15803d; border-color: #15803d; }
-    .filter-btn.watch.active { background: #fefce8; color: #a16207; border-color: #a16207; }
-    .filter-btn.sell.active { background: #fef2f2; color: #b91c1c; border-color: #b91c1c; }
+    .filter-btn.watch_sell.active { background: #fef9c3; color: #a16207; border-color: #a16207; }
     .table-wrap { background: #fff; border: 1px solid #e5e5e3; border-radius: 12px; overflow-x: auto; margin-bottom: 1.5rem; }
     table { width: 100%; border-collapse: collapse; min-width: 900px; }
     th { font-size: 11px; font-weight: 500; color: #aaa; text-align: left; padding: 10px 12px; border-bottom: 1px solid #f0f0ee; white-space: nowrap; user-select: none; }
@@ -143,8 +142,7 @@
     <span class="filter-label">Show:</span>
     <button class="filter-btn buy" onclick="toggleFilter('buy')">🔵 Buy</button>
     <button class="filter-btn hold" onclick="toggleFilter('hold')">🟢 Hold</button>
-    <button class="filter-btn watch" onclick="toggleFilter('watch')">🟠 Watch</button>
-    <button class="filter-btn sell" onclick="toggleFilter('sell')">🔴 Sell</button>
+    <button class="filter-btn watch_sell" onclick="toggleFilter('watch_sell')">🟠 Watch / Sell</button>
   </div>
 
   <div class="table-wrap">
@@ -461,8 +459,15 @@ function render() {
     else if (action === 'watch') watches++;
     else                        sells++;
 
-    // Skip if filtered out (activeFilter = null means show all)
-    if (activeFilter && action !== activeFilter) return;
+    // Skip if filtered out
+    // Special handling for watch_sell filter - show both watch AND sell
+    if (activeFilter) {
+      if (activeFilter === 'watch_sell') {
+        if (action !== 'watch' && action !== 'sell') return;
+      } else {
+        if (action !== activeFilter) return;
+      }
+    }
 
     const rowCls = action === 'buy' ? 'buy-row subnet-row' : 'subnet-row';
 
