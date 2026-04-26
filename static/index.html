@@ -139,10 +139,6 @@
     <div class="legend-item"><div class="ldot" style="background:#d1d5db"></div> No data (not counted in score)</div>
   </div>
 
-  <div class="leaderboard" id="leaderboard" style="font-size: 12px; color: #666; margin-bottom: 16px; line-height: 1.6;">
-    <!-- Populated by JavaScript -->
-  </div>
-
   <div class="filter-bar">
     <span class="filter-label">Show:</span>
     <button class="filter-btn buy" onclick="toggleFilter('buy')">🔵 Buy</button>
@@ -318,62 +314,6 @@ function renderDots(signals) {
     const cls = s.green === null ? 'dot-grey' : s.green ? 'dot-green' : 'dot-red';
     return `<div class="dot ${cls}" title="${i+1}. ${s.label}: ${s.value}"></div>`;
   }).join('') + '</div>';
-}
-
-// ── Leaderboard ──────────────────────────────────────────────────────────────
-
-function renderLeaderboard() {
-  const lbEl = document.getElementById('leaderboard');
-  const positions = walletPositions.filter(p => p.netuid !== 0);
-  
-  if (!positions.length) {
-    lbEl.innerHTML = '';
-    return;
-  }
-  
-  // Top Gainer (7d)
-  const topGainer = positions
-    .map(p => ({
-      netuid: p.netuid,
-      change: poolData[p.netuid]?.change_7d
-    }))
-    .filter(x => x.change != null)
-    .sort((a, b) => b.change - a.change)[0];
-  
-  // Highest APY
-  const topApy = positions
-    .map(p => ({
-      netuid: p.netuid,
-      apy: yieldData[p.netuid]?.seven_day_apy
-    }))
-    .filter(x => x.apy != null)
-    .sort((a, b) => b.apy - a.apy)[0];
-  
-  // Most Emissions
-  const topEmission = positions
-    .map(p => ({
-      netuid: p.netuid,
-      emission: poolData[p.netuid]?.emission_pct
-    }))
-    .filter(x => x.emission != null)
-    .sort((a, b) => b.emission - a.emission)[0];
-  
-  // Build single line
-  const parts = [];
-  
-  if (topGainer) {
-    parts.push(`🏆 <a href="https://taostats.io/subnet/${topGainer.netuid}" target="_blank" rel="noopener" style="color:#16a34a;text-decoration:none;font-weight:600;">SN${topGainer.netuid}</a> <span style="color:#16a34a;">(+${topGainer.change.toFixed(1)}%)</span>`);
-  }
-  
-  if (topApy) {
-    parts.push(`💰 <a href="https://taostats.io/subnet/${topApy.netuid}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none;font-weight:600;">SN${topApy.netuid}</a> <span style="color:#555;">(${topApy.apy.toFixed(1)}%)</span>`);
-  }
-  
-  if (topEmission) {
-    parts.push(`📡 <a href="https://taostats.io/subnet/${topEmission.netuid}" target="_blank" rel="noopener" style="color:#d97706;text-decoration:none;font-weight:600;">SN${topEmission.netuid}</a> <span style="color:#555;">(${topEmission.emission.toFixed(1)}%)</span>`);
-  }
-  
-  lbEl.innerHTML = parts.join(' <span style="color:#ccc;">|</span> ');
 }
 
 // ── Formatting helpers ───────────────────────────────────────────────────────
@@ -668,8 +608,6 @@ function render() {
   savePortfolioSnapshot(totalTao);
 
   document.getElementById('last-updated').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
-  
-  renderLeaderboard();
 }
 
 function toggleValidators(expandId, iconId) {
