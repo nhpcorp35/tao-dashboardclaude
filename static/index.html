@@ -182,6 +182,7 @@ let walletPositions = [];
 let poolData = {};
 let yieldData = {};
 let flowData = {};
+let taoPrice = null;  // TAO/USD price for conversions
 let refreshTimer = null;
 let countdownTimer = null;
 let nextRefreshAt = null;
@@ -317,6 +318,21 @@ function renderDots(signals) {
 
 // ── Formatting helpers ───────────────────────────────────────────────────────
 
+function fmtTao(taoAmount, options = {}) {
+  const showSymbol = options.symbol !== false; // default true
+  const decimals = options.decimals ?? 3;
+  const taoStr = `${showSymbol ? 'τ' : ''}${taoAmount.toFixed(decimals)}`;
+  
+  if (taoPrice && options.usd !== false) {
+    const usd = taoAmount * taoPrice;
+    const usdStr = usd >= 1000 
+      ? `$${(usd / 1000).toFixed(1)}k`
+      : `$${Math.round(usd).toLocaleString()}`;
+    return `${taoStr} (${usdStr})`;
+  }
+  return taoStr;
+}
+
 function fmtChange(val) {
   if (val === null || val === undefined || isNaN(val)) return '<span style="color:#ccc">—</span>';
   const cls = val >= 0 ? 'green' : 'red';
@@ -410,6 +426,11 @@ async function loadCache() {
     flowData = {};
     for (const [k, v] of Object.entries(json.flow)) flowData[parseInt(k)] = v;
   }
+  
+  // Store TAO/USD price
+  if (json.tao_price) {
+    taoPrice = parseFloat(json.tao_price);
+  }
 
   return json;
 }
@@ -431,7 +452,8 @@ function render() {
   if (rootPosition) {
     const validatorCount = rootPosition.validators ? rootPosition.validators.length : 0;
     const validatorText = validatorCount > 1 ? `${validatorCount} validators` : '1 validator';
-    rootInfoEl.innerHTML = `🔐 Root subnet (SN0): τ${rootPosition.tao_value.toFixed(4)} staked · ${validatorText}`;
+    const taoStr = fmtTao(rootPosition.tao_value, {decimals: 4});
+    rootInfoEl.innerHTML = `🔐 <a href="https://taostats.io/subnet/0" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Root subnet (SN0)</a>: ${taoStr} staked · ${validatorText}`;
     rootInfoEl.style.display = 'block';
   } else {
     rootInfoEl.style.display = 'none';
@@ -508,10 +530,12 @@ function render() {
 
     const scored = signals.filter(s => s.green !== null);
     const coverageTip = `${scored.length}/5 signals have data`;
+    
+    const taoValueStr = fmtTao(p.tao_value, {decimals: 4});
 
     html += `<tr class="${rowCls}" onclick="toggleValidators('${expandId}', '${iconId}')">
       <td>
-        <strong>SN${p.netuid}</strong>
+        <a href="https://taostats.io/subnet/${p.netuid}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="color:inherit;text-decoration:none;font-weight:600;">SN${p.netuid}</a>
         <span class="expand-icon" id="${iconId}">▶</span>
         ${subnetName ? `<div class="subnet-name">${subnetName}</div>` : ''}
         ${validatorCount > 1 ? `<div style="font-size:10px;color:#aaa">${validatorCount} validators</div>` : ''}
@@ -522,7 +546,7 @@ function render() {
       <td>${fmtApy(yd.seven_day_apy)}</td>
       <td>${emStr}</td>
       <td>${p.alpha_balance.toFixed(4)}</td>
-      <td>τ${p.tao_value.toFixed(4)}</td>
+      <td>${taoValueStr}</td>
       <td>${actionBadge(action)}</td>
       <td title="${coverageTip}">${renderDots(signals)}</td>
     </tr>`;
@@ -535,13 +559,14 @@ function render() {
         const vApy = vyData ? fmtApy(vyData.seven_day_apy) : '<span style="color:#ccc">—</span>';
         const rankStr = v.validator_rank != null ? `#${v.validator_rank}` : '—';
         const name = v.hotkey_name || (v.hotkey ? v.hotkey.slice(0, 12) + '…' : '—');
+        const vTaoStr = fmtTao(v.tao_value, {decimals: 4});
         html += `<tr class="validator-row">
           <td style="padding-left:28px;color:#555">${name}</td>
           <td colspan="3" style="color:#aaa;font-size:11px;font-family:monospace">${v.hotkey ? v.hotkey.slice(0,16) + '…' : '—'}</td>
           <td>${vApy}</td>
           <td style="color:#aaa">—</td>
           <td>${v.alpha_balance.toFixed(4)}</td>
-          <td>τ${v.tao_value.toFixed(4)}</td>
+          <td>${vTaoStr}</td>
           <td style="color:#aaa">Rank: ${rankStr}</td>
           <td></td>
         </tr>`;
@@ -553,7 +578,7 @@ function render() {
   tbody.innerHTML = html;
 
   // Update metrics (excluding Root from position count)
-  document.getElementById('m-total').textContent = `τ${totalTao.toFixed(3)}`;
+  document.getElementById('m-total').textContent = fmtTao(totalTao, {decimals: 3});
   document.getElementById('m-positions').textContent = positions.length; // Excluding Root
   document.getElementById('m-buys').textContent = buys;
   document.getElementById('m-holds').textContent = holds;
@@ -566,7 +591,8 @@ function render() {
   if (yesterdayTotal !== null) {
     const delta = totalTao - yesterdayTotal;
     const pct = ((delta / yesterdayTotal) * 100);
-    deltaEl.innerHTML = `<span class="${delta >= 0 ? 'green' : 'red'}">${delta >= 0 ? '+' : ''}τ${delta.toFixed(3)}</span>`;
+    const deltaStr = fmtTao(Math.abs(delta), {decimals: 3});
+    deltaEl.innerHTML = `<span class="${delta >= 0 ? 'green' : 'red'}">${delta >= 0 ? '+' : '-'}${deltaStr}</span>`;
     
     // Get yesterday's date
     const yesterday = new Date();

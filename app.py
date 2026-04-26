@@ -27,6 +27,7 @@ _cache = {
     "pool": {},
     "yield": {},
     "flow": {},
+    "tao_price": None,      # TAO/USD price
     "pool_updated": {},     # netuid -> unix ts of last successful pool cache
     "yield_updated": {},    # netuid -> unix ts of last successful yield cache
     "flow_updated": {},     # netuid -> unix ts of last successful flow cache
@@ -219,6 +220,21 @@ def parse_flow(raw, netuid):
     return {"netuid": netuid, "flow": flow_tao, "flow_ema": flow_tao}
 
 
+def fetch_tao_price():
+    """Fetch current TAO/USD price from TaoStats."""
+    try:
+        # TaoStats has a price endpoint that returns TAO price
+        raw = taostats_get(f"{TAOSTATS_BASE}/api/price/latest/v1")
+        data = raw.get("data", raw)
+        if isinstance(data, dict):
+            price = safe_float(data.get("price") or data.get("usd_price") or data.get("tao_price"))
+            return price
+        return None
+    except Exception as e:
+        app.logger.warning("Failed to fetch TAO price: %s", e)
+        return None
+
+
 # ── Background prefetch ───────────────────────────────────────────────────────
 
 def _record_error(kind, netuid, exc):
@@ -319,6 +335,12 @@ def fetch_all_data():
             _cache["wallet"] = positions
         app.logger.info("Wallet cached: %d positions: %s", len(netuids), netuids)
 
+        # 1.5. Fetch TAO/USD price
+        tao_price = fetch_tao_price()
+        with _cache_lock:
+            _cache["tao_price"] = tao_price
+        app.logger.info("TAO price: $%s", tao_price if tao_price else "N/A")
+
         # 2. Per-subnet data (parallel with 5 workers)
         # Each worker processes one subnet's pool+yield+flow sequence
         # With 60 req/min, 5 workers won't overwhelm the API
@@ -390,6 +412,7 @@ def get_cache():
             "pool": _cache["pool"],
             "yield": _cache["yield"],
             "flow": _cache["flow"],
+            "tao_price": _cache["tao_price"],
             "pool_updated": _cache["pool_updated"],
             "yield_updated": _cache["yield_updated"],
             "flow_updated": _cache["flow_updated"],
