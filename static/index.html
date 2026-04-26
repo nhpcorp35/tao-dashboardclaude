@@ -6,11 +6,11 @@
   <title>TAO Subnet Dashboard</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f3; color: #1a1a1a; min-height: 100vh; padding: 2rem 1rem; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f3; color: #1a1a1a; min-height: 100vh; padding: 1.6rem 1rem; }
     .container { max-width: 1280px; margin: 0 auto; }
-    h1 { font-size: 20px; font-weight: 500; margin-bottom: 6px; }
-    .wallet-addr { font-size: 12px; color: #888; font-family: monospace; margin-bottom: 2rem; word-break: break-all; }
-    .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 2rem; }
+    h1 { font-size: 20px; font-weight: 500; margin-bottom: 4px; }
+    .wallet-addr { font-size: 12px; color: #888; font-family: monospace; margin-bottom: 1.6rem; word-break: break-all; }
+    .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 1.6rem; }
     .metric-card { background: #fff; border: 1px solid #e5e5e3; border-radius: 10px; padding: 16px; }
     .metric-label { font-size: 12px; color: #888; margin-bottom: 6px; }
     .metric-value { font-size: 24px; font-weight: 500; }
@@ -19,7 +19,7 @@
     .red { color: #dc2626; }
     .blue { color: #2563eb; }
     .amber { color: #d97706; }
-    .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+    .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
     .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #666; }
     .ldot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
     .filter-bar { display: flex; gap: 8px; margin-bottom: 16px; align-items: center; }
@@ -65,20 +65,21 @@
     .footer-meta { font-size: 12px; color: #aaa; }
     .refresh-btn { font-size: 13px; padding: 7px 16px; border: 1px solid #e5e5e3; border-radius: 8px; background: #fff; color: #555; cursor: pointer; }
     .refresh-btn:hover { background: #f5f5f3; }
-    .status-bar { font-size: 12px; color: #aaa; margin-bottom: 1.5rem; }
+    .status-bar { font-size: 12px; color: #aaa; margin-bottom: 1.2rem; }
     .status-bar span { color: #16a34a; }
     .loading { color: #aaa; font-style: italic; }
     .next-refresh { font-size: 11px; color: #bbb; margin-top: 4px; }
-    .recommendation { background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%); border-radius: 12px; padding: 16px 20px; margin-bottom: 2rem; color: #fff; }
-    .rec-label { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #93c5fd; margin-bottom: 6px; }
-    .rec-main { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+    .recommendation { background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%); border-radius: 12px; padding: 14px 18px; margin-bottom: 1.2rem; color: #fff; }
+    .rec-label { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #93c5fd; margin-bottom: 5px; }
+    .rec-main { font-size: 16px; font-weight: 600; margin-bottom: 5px; }
     .rec-main a { color: #fff; text-decoration: underline; text-decoration-color: rgba(255,255,255,0.4); }
     .rec-main a:hover { text-decoration-color: rgba(255,255,255,0.8); }
     .rec-reason { font-size: 12px; color: #bfdbfe; line-height: 1.5; }
-    .signal-key { margin-bottom: 1.5rem; background: #fff; border: 1px solid #e5e5e3; border-radius: 10px; padding: 14px 16px; }
-    .signal-key-title { font-size: 11px; font-weight: 600; color: #aaa; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 10px; }
-    .signal-key-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 6px 16px; }
-    .signal-key-item { display: flex; align-items: center; gap: 7px; font-size: 11px; color: #555; }
+    .rec-risk { background: linear-gradient(135deg, #7f1d1d 0%, #991b1b 100%); border-radius: 12px; padding: 14px 18px; margin-bottom: 1.2rem; color: #fff; }
+    .signal-key { margin-bottom: 1.2rem; background: #fafaf9; border: 0.5px solid #e5e5e3; border-radius: 10px; padding: 10px 14px; }
+    .signal-key-title { font-size: 10px; font-weight: 500; color: #aaa; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px; }
+    .signal-key-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 4px 14px; }
+    .signal-key-item { display: flex; align-items: center; gap: 7px; font-size: 11px; color: #666; }
     .dot-num { width: 18px; height: 18px; border-radius: 50%; background: #2563eb; color: #fff; font-size: 9px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
     @media (max-width: 600px) {
       body { padding: 1rem 0.5rem; }
@@ -90,7 +91,7 @@
 <div class="container">
   <h1>TAO Subnet Dashboard</h1>
   <div class="wallet-addr" id="wallet-addr">loading...</div>
-  <div id="root-info" style="font-size: 13px; font-weight: 500; color: #888; margin-bottom: 2rem; display: none;"></div>
+  <div id="root-info" style="font-size: 13px; font-weight: 500; color: #888; margin-bottom: 1.6rem; display: none;"></div>
   <div class="status-bar" id="status-bar">Fetching data...</div>
 
   <div class="metric-grid">
@@ -132,6 +133,12 @@
     <div class="rec-reason" id="rec-reason">—</div>
   </div>
 
+  <div class="rec-risk" id="rec-risk" style="display:none;">
+    <div class="rec-label">Highest Risk Position</div>
+    <div class="rec-main" id="risk-main">—</div>
+    <div class="rec-reason" id="risk-reason">—</div>
+  </div>
+
   <div class="signal-key">
     <div class="signal-key-title">Signal dot key — hover dots for detail</div>
     <div class="signal-key-grid">
@@ -168,7 +175,7 @@
           <th class="sortable" onclick="sortBy('change_7d')">7d % <span class="sort-indicator" id="sort-change_7d"></span></th>
           <th class="sortable" onclick="sortBy('apy')">7d APY <span class="sort-indicator" id="sort-apy"></span></th>
           <th class="sortable" onclick="sortBy('emission')">Root Emission Share <span class="sort-indicator" id="sort-emission"></span></th>
-          <th class="sortable" onclick="sortBy('alpha_balance')">Alpha staked <span class="sort-indicator" id="sort-alpha_balance"></span></th>
+          <th class="sortable" onclick="sortBy('alpha_balance')">Position Size <span class="sort-indicator" id="sort-alpha_balance"></span></th>
           <th class="sortable" onclick="sortBy('tao_value')">TAO value <span class="sort-indicator" id="sort-tao_value"></span></th>
           <th class="sortable" onclick="sortBy('action')">Action <span class="sort-indicator" id="sort-action"></span></th>
           <th>Signals<br><span style="font-size:9px;color:#ccc;font-weight:400;letter-spacing:1px;">1  2  3  4  5</span></th>
@@ -390,6 +397,70 @@ function renderRecommendation() {
   recMain.innerHTML = `<a href="https://taostats.io/subnet/${top.netuid}" target="_blank" rel="noopener">SN${top.netuid} — ${top.name}</a>`;
   recReason.textContent = reasonStr;
   recEl.style.display = 'block';
+}
+
+function renderRiskPosition() {
+  const riskEl = document.getElementById('rec-risk');
+  const riskMain = document.getElementById('risk-main');
+  const riskReason = document.getElementById('risk-reason');
+  
+  const positions = walletPositions.filter(p => p.netuid !== 0);
+  
+  if (!positions.length) {
+    riskEl.style.display = 'none';
+    return;
+  }
+  
+  // Find highest risk (most red dots + sell action)
+  const scored = positions
+    .map(p => {
+      const pd = poolData[p.netuid] || {};
+      const yd = yieldData[p.netuid] || {};
+      const signals = evalSignals(p);
+      const action = getAction(signals);
+      const redCount = signals.filter(s => s.green === false).length;
+      const greenCount = signals.filter(s => s.green === true).length;
+      
+      return {
+        netuid: p.netuid,
+        name: pd.name || `SN${p.netuid}`,
+        action,
+        redCount,
+        greenCount,
+        apy: yd.seven_day_apy,
+        change7d: pd.change_7d,
+        change30d: pd.change_30d,
+        flow: flowData[p.netuid]?.flow,
+        signals
+      };
+    })
+    .filter(x => x.action === 'sell' || x.action === 'watch') // Only consider weak positions
+    .sort((a, b) => {
+      // Sort by most red dots first, then by fewest green
+      if (b.redCount !== a.redCount) return b.redCount - a.redCount;
+      return a.greenCount - b.greenCount;
+    });
+  
+  if (!scored.length) {
+    riskEl.style.display = 'none';
+    return;
+  }
+  
+  const worst = scored[0];
+  
+  // Build reason string
+  const reasons = [];
+  if (worst.flow && worst.flow < 0) reasons.push('weak flow');
+  if (worst.apy && worst.apy < 20) reasons.push(`low APY (${worst.apy.toFixed(1)}%)`);
+  if (worst.change30d && worst.change30d < -5) reasons.push('deteriorating 30d trend');
+  if (worst.change7d && worst.change7d < -3) reasons.push('declining 7d price');
+  if (reasons.length === 0) reasons.push(`${worst.redCount}/5 signals red`);
+  
+  const reasonStr = 'Reason: ' + reasons.join(', ');
+  
+  riskMain.innerHTML = `<a href="https://taostats.io/subnet/${worst.netuid}" target="_blank" rel="noopener">SN${worst.netuid} — ${worst.name}</a>`;
+  riskReason.textContent = reasonStr;
+  riskEl.style.display = 'block';
 }
 
 // ── Formatting helpers ───────────────────────────────────────────────────────
@@ -686,6 +757,7 @@ function render() {
   document.getElementById('last-updated').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
   
   renderRecommendation();
+  renderRiskPosition();
 }
 
 function toggleValidators(expandId, iconId) {
