@@ -76,6 +76,7 @@
     .rec-main a:hover { text-decoration-color: rgba(255,255,255,0.8); }
     .rec-reason { font-size: 12px; color: #bfdbfe; line-height: 1.5; }
     .rec-risk { background: linear-gradient(135deg, #7f1d1d 0%, #991b1b 100%); border-radius: 12px; padding: 14px 18px; margin-bottom: 1.2rem; color: #fff; }
+    .rec-move { background: linear-gradient(135deg, #065f46 0%, #047857 100%); border-radius: 12px; padding: 14px 18px; margin-bottom: 1.2rem; color: #fff; }
     .signal-key { margin-bottom: 1.2rem; background: #fafaf9; border: 0.5px solid #e5e5e3; border-radius: 10px; padding: 10px 14px; }
     .signal-key-title { font-size: 10px; font-weight: 500; color: #aaa; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px; }
     .signal-key-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 4px 14px; }
@@ -137,6 +138,12 @@
     <div class="rec-label">Highest Risk Position</div>
     <div class="rec-main" id="risk-main">—</div>
     <div class="rec-reason" id="risk-reason">—</div>
+  </div>
+
+  <div class="rec-move" id="rec-move" style="display:none;">
+    <div class="rec-label">Suggested Move Today</div>
+    <div class="rec-main" id="move-main">—</div>
+    <div class="rec-reason" id="move-reason">—</div>
   </div>
 
   <div class="signal-key">
@@ -463,6 +470,118 @@ function renderRiskPosition() {
   riskEl.style.display = 'block';
 }
 
+function renderSuggestedMove() {
+  const moveEl = document.getElementById('rec-move');
+  const moveMain = document.getElementById('move-main');
+  const moveReason = document.getElementById('move-reason');
+  
+  const positions = walletPositions.filter(p => p.netuid !== 0);
+  
+  if (!positions.length) {
+    moveEl.style.display = 'none';
+    return;
+  }
+  
+  // Find strongest Buy position
+  const buyPositions = positions
+    .map(p => {
+      const pd = poolData[p.netuid] || {};
+      const yd = yieldData[p.netuid] || {};
+      const signals = evalSignals(p);
+      const action = getAction(signals);
+      const greenCount = signals.filter(s => s.green === true).length;
+      
+      return {
+        netuid: p.netuid,
+        name: pd.name || `SN${p.netuid}`,
+        action,
+        greenCount,
+        tao_value: p.tao_value,
+        apy: yd.seven_day_apy,
+        change7d: pd.change_7d,
+        emission: pd.emission_pct,
+        flow: flowData[p.netuid]?.flow
+      };
+    })
+    .filter(x => x.action === 'buy')
+    .sort((a, b) => {
+      if (b.greenCount !== a.greenCount) return b.greenCount - a.greenCount;
+      return (b.apy || 0) - (a.apy || 0);
+    });
+  
+  // Find weakest Sell/Watch position
+  const sellPositions = positions
+    .map(p => {
+      const pd = poolData[p.netuid] || {};
+      const yd = yieldData[p.netuid] || {};
+      const signals = evalSignals(p);
+      const action = getAction(signals);
+      const redCount = signals.filter(s => s.green === false).length;
+      
+      return {
+        netuid: p.netuid,
+        name: pd.name || `SN${p.netuid}`,
+        action,
+        redCount,
+        tao_value: p.tao_value,
+        apy: yd.seven_day_apy,
+        change7d: pd.change_7d,
+        emission: pd.emission_pct,
+        flow: flowData[p.netuid]?.flow
+      };
+    })
+    .filter(x => x.action === 'sell' || x.action === 'watch')
+    .sort((a, b) => b.redCount - a.redCount);
+  
+  if (!buyPositions.length || !sellPositions.length) {
+    moveEl.style.display = 'none';
+    return;
+  }
+  
+  const fromPos = sellPositions[0];
+  const toPos = buyPositions[0];
+  
+  // Calculate suggested amount (15% of from position, rounded to nearest 0.5)
+  const suggestedAmount = Math.round((fromPos.tao_value * 0.15) * 2) / 2;
+  
+  // Build comparison reasons
+  const reasons = [];
+  
+  // APY comparison
+  if (toPos.apy && fromPos.apy) {
+    const apyDiff = toPos.apy - fromPos.apy;
+    if (apyDiff > 5) reasons.push(`higher APY (+${apyDiff.toFixed(1)}pp)`);
+  } else if (toPos.apy && toPos.apy >= 20) {
+    reasons.push(`strong APY (${toPos.apy.toFixed(1)}%)`);
+  }
+  
+  // Emission comparison
+  if (toPos.emission && fromPos.emission) {
+    if (toPos.emission > fromPos.emission) reasons.push('stronger root share');
+  } else if (toPos.emission && toPos.emission >= 1) {
+    reasons.push('high root share');
+  }
+  
+  // Trend comparison
+  if (toPos.change7d && fromPos.change7d) {
+    if (toPos.change7d > 0 && fromPos.change7d < 0) reasons.push('improving vs declining trend');
+    else if (toPos.change7d > fromPos.change7d + 3) reasons.push('better momentum');
+  }
+  
+  // Flow comparison
+  if (toPos.flow && fromPos.flow) {
+    if (toPos.flow > 0 && fromPos.flow < 0) reasons.push('positive vs negative flow');
+  }
+  
+  if (reasons.length === 0) reasons.push('better signals');
+  
+  const reasonStr = 'Reason: ' + reasons.join(', ');
+  
+  moveMain.innerHTML = `Trim <a href="https://taostats.io/subnet/${fromPos.netuid}" target="_blank" rel="noopener">τ${suggestedAmount.toFixed(1)} from SN${fromPos.netuid}</a> → Add to <a href="https://taostats.io/subnet/${toPos.netuid}" target="_blank" rel="noopener">SN${toPos.netuid}</a>`;
+  moveReason.textContent = reasonStr;
+  moveEl.style.display = 'block';
+}
+
 // ── Formatting helpers ───────────────────────────────────────────────────────
 
 function fmtTao(taoAmount, options = {}) {
@@ -758,6 +877,7 @@ function render() {
   
   renderRecommendation();
   renderRiskPosition();
+  renderSuggestedMove();
 }
 
 function toggleValidators(expandId, iconId) {
