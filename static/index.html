@@ -82,6 +82,30 @@
     .signal-key-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 4px 14px; }
     .signal-key-item { display: flex; align-items: center; gap: 7px; font-size: 11px; color: #666; }
     .dot-num { width: 18px; height: 18px; border-radius: 50%; background: #2563eb; color: #fff; font-size: 9px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    
+    /* History Modal */
+    .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 1000; }
+    .modal-overlay.show { display: flex; }
+    .modal-content { background: #fff; border-radius: 16px; width: 90%; max-width: 1000px; max-height: 85vh; overflow: hidden; display: flex; flex-direction: column; }
+    .modal-header { padding: 20px 24px; border-bottom: 1px solid #e5e5e3; display: flex; justify-content: space-between; align-items: center; }
+    .modal-header h2 { font-size: 18px; font-weight: 600; margin: 0; }
+    .modal-close { background: none; border: none; font-size: 24px; cursor: pointer; color: #888; padding: 0; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 6px; }
+    .modal-close:hover { background: #f5f5f3; }
+    .modal-tabs { display: flex; gap: 0; padding: 0 24px; border-bottom: 1px solid #e5e5e3; }
+    .modal-tab { padding: 12px 20px; background: none; border: none; font-size: 13px; font-weight: 500; cursor: pointer; color: #888; border-bottom: 2px solid transparent; }
+    .modal-tab.active { color: #2563eb; border-bottom-color: #2563eb; }
+    .modal-body { padding: 24px; overflow-y: auto; flex: 1; }
+    .history-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .history-summary-card { background: #f9fafb; border-radius: 10px; padding: 16px; }
+    .history-summary-label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+    .history-summary-value { font-size: 20px; font-weight: 600; }
+    .history-summary-sub { font-size: 12px; color: #666; margin-top: 4px; }
+    .history-table { width: 100%; border-collapse: collapse; }
+    .history-table th { text-align: left; font-size: 11px; color: #888; font-weight: 500; padding: 8px 12px; border-bottom: 1px solid #e5e5e3; }
+    .history-table td { padding: 12px; border-bottom: 1px solid #f5f5f3; font-size: 13px; }
+    .history-table tr:hover { background: #fafaf9; }
+    .history-empty { text-align: center; padding: 48px 24px; color: #aaa; }
+    
     @media (max-width: 600px) {
       body { padding: 1rem 0.5rem; }
       .metric-value { font-size: 20px; }
@@ -94,6 +118,15 @@
   <div class="wallet-addr" id="wallet-addr">loading...</div>
   <div id="root-info" style="font-size: 13px; font-weight: 500; color: #888; margin-bottom: 1.6rem; display: none;"></div>
   <div class="status-bar" id="status-bar">Fetching data...</div>
+  
+  <div style="display: flex; gap: 12px; justify-content: flex-end; margin-bottom: 1.2rem;">
+    <button onclick="showHistoryModal()" style="padding: 8px 16px; background: #fff; border: 1px solid #e5e5e3; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; color: #555;">
+      📊 History
+    </button>
+    <button onclick="refreshNow()" style="padding: 8px 16px; background: #2563eb; color: #fff; border: none; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer;">
+      🔄 Refresh now
+    </button>
+  </div>
 
   <div class="metric-grid">
     <div class="metric-card">
@@ -971,6 +1004,7 @@ function render() {
   renderRecommendation();
   renderRiskPosition();
   renderSuggestedMove();
+  saveCurrentSnapshot();
 }
 
 function toggleValidators(expandId, iconId) {
@@ -998,6 +1032,245 @@ function startCountdown() {
 }
 
 // ── Main load ────────────────────────────────────────────────────────────────
+
+// ── History & Snapshots ──────────────────────────────────────────────────────
+
+class HistoryStorage {
+  static STORAGE_KEY = 'tao_dashboard_history';
+  
+  static saveSnapshot(data) {
+    const snapshots = this.getAllSnapshots();
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    
+    // Check if we already have a snapshot for today
+    const existingIndex = snapshots.findIndex(s => s.date === today);
+    
+    const snapshot = {
+      date: today,
+      timestamp: new Date().toISOString(),
+      coldkey: data.coldkey,
+      total_tao: data.total_tao,
+      total_usd: data.total_usd,
+      tao_price: data.tao_price,
+      position_count: data.position_count,
+      actions: data.actions // {buy: 2, hold: 6, watch: 1, sell: 1}
+    };
+    
+    if (existingIndex >= 0) {
+      // Update existing snapshot
+      snapshots[existingIndex] = snapshot;
+    } else {
+      // Add new snapshot
+      snapshots.push(snapshot);
+    }
+    
+    // Keep last 365 days only
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - 365);
+    const filtered = snapshots.filter(s => new Date(s.date) >= cutoffDate);
+    
+    localStorage.setItem(this.STORAGE_KEY, JSON.stringify(filtered));
+  }
+  
+  static getAllSnapshots() {
+    const stored = localStorage.getItem(this.STORAGE_KEY);
+    return stored ? JSON.parse(stored) : [];
+  }
+  
+  static getSnapshots(days) {
+    const all = this.getAllSnapshots();
+    if (days === 'all') return all;
+    
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - parseInt(days));
+    
+    return all.filter(s => new Date(s.date) >= cutoffDate);
+  }
+}
+
+function saveCurrentSnapshot() {
+  if (!walletPositions || !walletPositions.length) return;
+  
+  const positions = walletPositions.filter(p => p.netuid !== 0);
+  let totalTao = 0;
+  let actions = {buy: 0, hold: 0, watch: 0, sell: 0};
+  
+  // Include Root in total
+  const rootPos = walletPositions.find(p => p.netuid === 0);
+  if (rootPos) totalTao += rootPos.tao_value;
+  
+  positions.forEach(p => {
+    totalTao += p.tao_value;
+    const signals = evalSignals(p);
+    const action = getAction(signals);
+    actions[action]++;
+  });
+  
+  const totalUsd = taoPrice ? totalTao * taoPrice : null;
+  
+  HistoryStorage.saveSnapshot({
+    coldkey: document.getElementById('wallet-addr').textContent,
+    total_tao: totalTao,
+    total_usd: totalUsd,
+    tao_price: taoPrice,
+    position_count: positions.length,
+    actions: actions
+  });
+}
+
+// Modal functions
+let currentHistoryTab = '30d';
+
+function showHistoryModal() {
+  document.getElementById('history-modal').classList.add('show');
+  renderHistoryContent(currentHistoryTab);
+}
+
+function hideHistoryModal() {
+  document.getElementById('history-modal').classList.remove('show');
+}
+
+function switchHistoryTab(tab, button) {
+  currentHistoryTab = tab;
+  
+  // Update tab UI
+  document.querySelectorAll('.modal-tab').forEach(b => b.classList.remove('active'));
+  button.classList.add('active');
+  
+  renderHistoryContent(tab);
+}
+
+function renderHistoryContent(period) {
+  const snapshots = HistoryStorage.getSnapshots(period).sort((a, b) => 
+    new Date(b.date) - new Date(a.date)
+  );
+  
+  const contentEl = document.getElementById('history-content');
+  
+  if (!snapshots.length) {
+    contentEl.innerHTML = '<div class="history-empty">No history data yet. Data will be collected after each refresh.</div>';
+    return;
+  }
+  
+  // Calculate summary metrics
+  const latest = snapshots[0];
+  const oldest = snapshots[snapshots.length - 1];
+  
+  const pnlTao = latest.total_tao - oldest.total_tao;
+  const pnlUsd = latest.total_usd && oldest.total_usd ? latest.total_usd - oldest.total_usd : null;
+  const pnlPct = ((pnlTao / oldest.total_tao) * 100).toFixed(2);
+  
+  // Find best/worst days
+  let bestDay = null;
+  let worstDay = null;
+  let bestChange = -Infinity;
+  let worstChange = Infinity;
+  
+  for (let i = 0; i < snapshots.length - 1; i++) {
+    const change = snapshots[i].total_tao - snapshots[i + 1].total_tao;
+    if (change > bestChange) {
+      bestChange = change;
+      bestDay = snapshots[i];
+    }
+    if (change < worstChange) {
+      worstChange = change;
+      worstDay = snapshots[i];
+    }
+  }
+  
+  // Build HTML
+  let html = '<div class="history-summary">';
+  
+  // Total P&L
+  html += `<div class="history-summary-card">
+    <div class="history-summary-label">Total P&L (${period === 'all' ? 'All Time' : period.toUpperCase()})</div>
+    <div class="history-summary-value" style="color: ${pnlTao >= 0 ? '#16a34a' : '#dc2626'}">
+      ${pnlTao >= 0 ? '+' : ''}τ${pnlTao.toFixed(3)}
+    </div>
+    <div class="history-summary-sub">
+      ${pnlUsd !== null ? `${pnlUsd >= 0 ? '+' : ''}$${Math.round(pnlUsd).toLocaleString()}` : ''}
+      <span style="margin-left: 8px;">(${pnlPct >= 0 ? '+' : ''}${pnlPct}%)</span>
+    </div>
+  </div>`;
+  
+  // Current Value
+  html += `<div class="history-summary-card">
+    <div class="history-summary-label">Current Value</div>
+    <div class="history-summary-value">τ${latest.total_tao.toFixed(3)}</div>
+    <div class="history-summary-sub">${latest.total_usd ? '$' + Math.round(latest.total_usd).toLocaleString() : ''}</div>
+  </div>`;
+  
+  // Best Day
+  if (bestDay && bestChange > 0) {
+    html += `<div class="history-summary-card">
+      <div class="history-summary-label">Best Day</div>
+      <div class="history-summary-value" style="color: #16a34a">+τ${bestChange.toFixed(3)}</div>
+      <div class="history-summary-sub">${new Date(bestDay.date).toLocaleDateString()}</div>
+    </div>`;
+  }
+  
+  // Worst Day
+  if (worstDay && worstChange < 0) {
+    html += `<div class="history-summary-card">
+      <div class="history-summary-label">Worst Day</div>
+      <div class="history-summary-value" style="color: #dc2626">τ${worstChange.toFixed(3)}</div>
+      <div class="history-summary-sub">${new Date(worstDay.date).toLocaleDateString()}</div>
+    </div>`;
+  }
+  
+  html += '</div>';
+  
+  // Table
+  html += `<table class="history-table">
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Portfolio Value</th>
+        <th>Daily Change</th>
+        <th>Positions</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>`;
+  
+  for (let i = 0; i < snapshots.length; i++) {
+    const snap = snapshots[i];
+    const prevSnap = snapshots[i + 1];
+    
+    const changeTao = prevSnap ? snap.total_tao - prevSnap.total_tao : 0;
+    const changeUsd = (prevSnap && snap.total_usd && prevSnap.total_usd) ? snap.total_usd - prevSnap.total_usd : null;
+    const changePct = prevSnap ? ((changeTao / prevSnap.total_tao) * 100).toFixed(2) : null;
+    
+    html += `<tr>
+      <td>${new Date(snap.date).toLocaleDateString()}</td>
+      <td>
+        <div style="font-weight: 500;">τ${snap.total_tao.toFixed(3)}</div>
+        <div style="font-size: 11px; color: #888;">${snap.total_usd ? '$' + Math.round(snap.total_usd).toLocaleString() : ''}</div>
+      </td>
+      <td>
+        ${prevSnap ? `
+          <div style="color: ${changeTao >= 0 ? '#16a34a' : '#dc2626'}; font-weight: 500;">
+            ${changeTao >= 0 ? '+' : ''}τ${changeTao.toFixed(3)} (${changePct >= 0 ? '+' : ''}${changePct}%)
+          </div>
+          ${changeUsd !== null ? `<div style="font-size: 11px; color: #888;">${changeUsd >= 0 ? '+' : ''}$${Math.round(changeUsd).toLocaleString()}</div>` : ''}
+        ` : '<span style="color: #ccc;">—</span>'}
+      </td>
+      <td>${snap.position_count}</td>
+      <td style="font-size: 11px;">
+        <span style="color: #2563eb;">B:${snap.actions.buy}</span>
+        <span style="color: #16a34a; margin-left: 8px;">H:${snap.actions.hold}</span>
+        <span style="color: #d97706; margin-left: 8px;">W:${snap.actions.watch}</span>
+        <span style="color: #dc2626; margin-left: 8px;">S:${snap.actions.sell}</span>
+      </td>
+    </tr>`;
+  }
+  
+  html += '</tbody></table>';
+  
+  contentEl.innerHTML = html;
+}
+
+// ── Main ─────────────────────────────────────────────────────────────────────
 
 async function loadAll() {
   document.getElementById('status-bar').innerHTML = 'Fetching data...';
@@ -1046,5 +1319,25 @@ async function manualRefresh() {
 
 loadAll();
 </script>
+
+<!-- History Modal -->
+<div class="modal-overlay" id="history-modal" onclick="if(event.target === this) hideHistoryModal()">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h2>Portfolio History</h2>
+      <button class="modal-close" onclick="hideHistoryModal()">×</button>
+    </div>
+    <div class="modal-tabs">
+      <button class="modal-tab active" onclick="switchHistoryTab('30d', this)">30 Days</button>
+      <button class="modal-tab" onclick="switchHistoryTab('60d', this)">60 Days</button>
+      <button class="modal-tab" onclick="switchHistoryTab('90d', this)">90 Days</button>
+      <button class="modal-tab" onclick="switchHistoryTab('all', this)">All Time</button>
+    </div>
+    <div class="modal-body" id="history-content">
+      <div class="history-empty">Loading history...</div>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
