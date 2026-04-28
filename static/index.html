@@ -55,6 +55,7 @@
     .badge-hold  { background: #dcfce7; color: #15803d; }
     .badge-watch { background: #fef9c3; color: #a16207; }
     .badge-sell  { background: #fee2e2; color: #b91c1c; }
+    .badge-take-profit { background: #d1fae5; color: #047857; font-weight: 600; }
     .dots { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
     .dot { width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; cursor: help; }
     .dot-green { background: #16a34a; }
@@ -77,6 +78,7 @@
     .rec-reason { font-size: 12px; color: #bfdbfe; line-height: 1.5; }
     .rec-risk { background: linear-gradient(135deg, #7f1d1d 0%, #991b1b 100%); border-radius: 12px; padding: 14px 18px; margin-bottom: 1.2rem; color: #fff; }
     .rec-move { background: linear-gradient(135deg, #065f46 0%, #047857 100%); border-radius: 12px; padding: 14px 18px; margin-bottom: 1.2rem; color: #fff; }
+    .rec-profit { background: linear-gradient(135deg, #059669 0%, #10b981 100%); border-radius: 12px; padding: 14px 18px; margin-bottom: 1.2rem; color: #fff; }
     .signal-key { margin-bottom: 1.2rem; background: #fafaf9; border: 0.5px solid #e5e5e3; border-radius: 10px; padding: 10px 14px; }
     .signal-key-title { font-size: 10px; font-weight: 500; color: #aaa; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px; }
     .signal-key-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 4px 14px; }
@@ -177,6 +179,12 @@
     <div class="rec-label">Today's Move</div>
     <div class="rec-main" id="move-main">—</div>
     <div class="rec-reason" id="move-reason">—</div>
+  </div>
+
+  <div class="rec-profit" id="rec-profit" style="display:none;">
+    <div class="rec-label">Take Profit Opportunity</div>
+    <div class="rec-main" id="profit-main">—</div>
+    <div class="rec-reason" id="profit-reason">—</div>
   </div>
 
   <div class="signal-key">
@@ -351,7 +359,7 @@ function evalSignals(p) {
   return signals;
 }
 
-function getAction(signals) {
+function getAction(signals, netuid) {
   // Calculate weighted score (0-100)
   let totalWeight = 0;
   let weightedScore = 0;
@@ -372,11 +380,26 @@ function getAction(signals) {
   // Calculate percentage score
   const score = (weightedScore / totalWeight) * 100;
   
-  // Apply weighted thresholds
-  if (score > 80) return 'buy';
-  if (score >= 60) return 'hold';
-  if (score >= 40) return 'watch';
-  return 'sell';
+  // Determine base action
+  let action;
+  if (score > 80) action = 'buy';
+  else if (score >= 60) action = 'hold';
+  else if (score >= 40) action = 'watch';
+  else action = 'sell';
+  
+  // Check for take profit conditions (only if not a strong buy)
+  if (action !== 'buy' && netuid) {
+    const gains = getPositionGains(netuid);
+    if (gains) {
+      const maxGain = Math.max(gains.gain7d || 0, gains.gain30d || 0);
+      // Take profit if >15% (7d) or >25% (30d)
+      if ((gains.gain7d && gains.gain7d >= 15) || (gains.gain30d && gains.gain30d >= 25)) {
+        return 'take_profit';
+      }
+    }
+  }
+  
+  return action;
 }
 
 function actionBadge(action) {
@@ -385,6 +408,7 @@ function actionBadge(action) {
     hold:  ['badge-hold',  '● Hold'],
     watch: ['badge-watch', '◐ Watch'],
     sell:  ['badge-sell',  '▼ Sell'],
+    take_profit: ['badge-take-profit', '💰 Take Profit'],
   };
   const [cls, label] = map[action];
   return `<span class="badge ${cls}">${label}</span>`;
@@ -417,7 +441,7 @@ function renderRecommendation() {
       const pd = poolData[p.netuid] || {};
       const yd = yieldData[p.netuid] || {};
       const signals = evalSignals(p);
-      const action = getAction(signals);
+      const action = getAction(signals, p.netuid);
       const greenCount = signals.filter(s => s.green === true).length;
       
       return {
@@ -495,7 +519,7 @@ function renderRiskPosition() {
       const pd = poolData[p.netuid] || {};
       const yd = yieldData[p.netuid] || {};
       const signals = evalSignals(p);
-      const action = getAction(signals);
+      const action = getAction(signals, p.netuid);
       const redCount = signals.filter(s => s.green === false).length;
       const greenCount = signals.filter(s => s.green === true).length;
       
@@ -576,7 +600,7 @@ function renderSuggestedMove() {
       const pd = poolData[p.netuid] || {};
       const yd = yieldData[p.netuid] || {};
       const signals = evalSignals(p);
-      const action = getAction(signals);
+      const action = getAction(signals, p.netuid);
       const greenCount = signals.filter(s => s.green === true).length;
       
       return {
@@ -603,7 +627,7 @@ function renderSuggestedMove() {
       const pd = poolData[p.netuid] || {};
       const yd = yieldData[p.netuid] || {};
       const signals = evalSignals(p);
-      const action = getAction(signals);
+      const action = getAction(signals, p.netuid);
       const redCount = signals.filter(s => s.green === false).length;
       
       return {
@@ -708,6 +732,52 @@ function renderSuggestedMove() {
   moveEl.style.display = 'block';
 }
 
+function renderTakeProfitBanner() {
+  const profitEl = document.getElementById('rec-profit');
+  const profitMain = document.getElementById('profit-main');
+  const profitReason = document.getElementById('profit-reason');
+  
+  const positions = walletPositions.filter(p => p.netuid !== 0);
+  
+  if (!positions.length) {
+    profitEl.style.display = 'none';
+    return;
+  }
+  
+  // Find positions with take_profit action and sort by biggest gain
+  const profitOpps = positions
+    .map(p => {
+      const pd = poolData[p.netuid] || {};
+      const signals = evalSignals(p);
+      const action = getAction(signals, p.netuid);
+      const gains = getPositionGains(p.netuid);
+      
+      return {
+        netuid: p.netuid,
+        name: pd.name || `SN${p.netuid}`,
+        action,
+        gains,
+        maxGain: gains ? Math.max(gains.gain7d || 0, gains.gain30d || 0) : 0,
+        tao_value: p.tao_value
+      };
+    })
+    .filter(x => x.action === 'take_profit' && x.maxGain > 0)
+    .sort((a, b) => b.maxGain - a.maxGain);
+  
+  if (!profitOpps.length) {
+    profitEl.style.display = 'none';
+    return;
+  }
+  
+  const top = profitOpps[0];
+  const gainPeriod = top.gains.gain7d >= 15 ? '7d' : '30d';
+  const gainValue = gainPeriod === '7d' ? top.gains.gain7d : top.gains.gain30d;
+  
+  profitMain.innerHTML = `<a href="https://taostats.io/subnet/${top.netuid}" target="_blank" rel="noopener">SN${top.netuid} — ${top.name}</a>`;
+  profitReason.textContent = `Reason: Up +${gainValue.toFixed(1)}% in ${gainPeriod}, signals weakening, lock in gains`;
+  profitEl.style.display = 'block';
+}
+
 // ── Formatting helpers ───────────────────────────────────────────────────────
 
 function fmtTao(taoAmount, options = {}) {
@@ -764,7 +834,7 @@ function getSortValue(p, column) {
     case 'tao_value': return p.tao_value;
     case 'action': 
       const signals = evalSignals(p);
-      const action = getAction(signals);
+      const action = getAction(signals, p.netuid);
       const rank = { buy: 4, hold: 3, watch: 2, sell: 1 };
       return rank[action];
     default: return 0;
@@ -888,18 +958,23 @@ function render() {
     const pd = poolData[p.netuid] || {};
     const yd = yieldData[p.netuid] || {};
     const signals = evalSignals(p);
-    const action = getAction(signals);
+    const action = getAction(signals, p.netuid);  // Pass netuid for take profit detection
+    
+    // Get position gains for display
+    const gains = getPositionGains(p.netuid);
+    const maxGain = gains ? Math.max(gains.gain7d || 0, gains.gain30d || 0) : 0;
 
     if (action === 'buy')       buys++;
     else if (action === 'hold') holds++;
     else if (action === 'watch') watches++;
+    else if (action === 'take_profit') sells++;  // Count take_profit with sells metric
     else                        sells++;
 
     // Skip if filtered out
-    // Special handling for watch_sell filter - show both watch AND sell
+    // Special handling for watch_sell filter - show both watch AND sell (and take_profit)
     if (activeFilter) {
       if (activeFilter === 'watch_sell') {
-        if (action !== 'watch' && action !== 'sell') return;
+        if (action !== 'watch' && action !== 'sell' && action !== 'take_profit') return;
       } else {
         if (action !== activeFilter) return;
       }
@@ -923,7 +998,13 @@ function render() {
     const scored = signals.filter(s => s.green !== null);
     const coverageTip = `${scored.length}/5 signals have data`;
     
-    const taoValueStr = fmtTao(p.tao_value, {decimals: 4});
+    // Build TAO value string with gains if significant (>10%)
+    let taoValueStr = fmtTao(p.tao_value, {decimals: 4});
+    if (maxGain >= 10) {
+      const gainPeriod = gains.gain7d >= 10 ? '7d' : '30d';
+      const gainColor = maxGain >= 0 ? '#16a34a' : '#dc2626';
+      taoValueStr += `<div style="font-size:10px;color:${gainColor};margin-top:2px;">+${maxGain.toFixed(1)}% (${gainPeriod})</div>`;
+    }
 
     html += `<tr class="${rowCls}" onclick="toggleValidators('${expandId}', '${iconId}')">
       <td>
@@ -1004,6 +1085,7 @@ function render() {
   renderRecommendation();
   renderRiskPosition();
   renderSuggestedMove();
+  renderTakeProfitBanner();
   saveCurrentSnapshot();
 }
 
@@ -1099,11 +1181,20 @@ function saveCurrentSnapshot() {
   const rootPos = walletPositions.find(p => p.netuid === 0);
   if (rootPos) totalTao += rootPos.tao_value;
   
+  // Build per-position snapshot data
+  const positionData = [];
+  
   positions.forEach(p => {
     totalTao += p.tao_value;
     const signals = evalSignals(p);
-    const action = getAction(signals);
+    const action = getAction(signals, p.netuid);
     actions[action]++;
+    
+    positionData.push({
+      netuid: p.netuid,
+      tao_value: p.tao_value,
+      alpha_balance: p.alpha_balance
+    });
   });
   
   const totalUsd = taoPrice ? totalTao * taoPrice : null;
@@ -1114,12 +1205,57 @@ function saveCurrentSnapshot() {
     total_usd: totalUsd,
     tao_price: taoPrice,
     position_count: positions.length,
-    actions: actions
+    actions: actions,
+    positions: positionData  // Added per-position tracking
   });
 }
 
 // Modal functions
 let currentHistoryTab = '30d';
+
+function getPositionGains(netuid) {
+  const snapshots = HistoryStorage.getAllSnapshots();
+  if (snapshots.length < 2) return null;
+  
+  // Get latest snapshot with position data
+  const latest = snapshots[snapshots.length - 1];
+  if (!latest.positions) return null;
+  
+  const latestPos = latest.positions.find(p => p.netuid === netuid);
+  if (!latestPos) return null;
+  
+  // Calculate 7d gain
+  const sevenDaysAgo = new Date();
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  const snapshot7d = snapshots
+    .filter(s => new Date(s.date) <= sevenDaysAgo && s.positions)
+    .pop();
+  
+  let gain7d = null;
+  if (snapshot7d) {
+    const oldPos = snapshot7d.positions.find(p => p.netuid === netuid);
+    if (oldPos && oldPos.tao_value > 0) {
+      gain7d = ((latestPos.tao_value - oldPos.tao_value) / oldPos.tao_value) * 100;
+    }
+  }
+  
+  // Calculate 30d gain
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  const snapshot30d = snapshots
+    .filter(s => new Date(s.date) <= thirtyDaysAgo && s.positions)
+    .pop();
+  
+  let gain30d = null;
+  if (snapshot30d) {
+    const oldPos = snapshot30d.positions.find(p => p.netuid === netuid);
+    if (oldPos && oldPos.tao_value > 0) {
+      gain30d = ((latestPos.tao_value - oldPos.tao_value) / oldPos.tao_value) * 100;
+    }
+  }
+  
+  return { gain7d, gain30d };
+}
 
 function showHistoryModal() {
   document.getElementById('history-modal').classList.add('show');
