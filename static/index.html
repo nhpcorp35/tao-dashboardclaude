@@ -108,6 +108,10 @@
     .history-table tr:hover { background: #fafaf9; }
     .history-empty { text-align: center; padding: 48px 24px; color: #aaa; }
     
+    /* Market table styles */
+    #market-table th:hover { background: #f0f0f0; }
+    #market-table tbody tr:hover { background: #f9fafb !important; }
+    
     @media (max-width: 600px) {
       body { padding: 1rem 0.5rem; }
       .metric-value { font-size: 20px; }
@@ -206,6 +210,18 @@
     <div class="legend-item"><div class="ldot" style="background:#d1d5db"></div> No data (not counted in score)</div>
   </div>
 
+  <!-- View Toggle -->
+  <div style="display: flex; gap: 12px; margin: 2rem 0 1.5rem 0; border-bottom: 1px solid #e5e5e3; padding-bottom: 0;">
+    <button id="btn-my-positions" onclick="switchView('positions')" style="padding: 12px 24px; background: #2563eb; color: #fff; border: none; border-bottom: 3px solid #2563eb; font-size: 14px; font-weight: 600; cursor: pointer;">
+      My Positions
+    </button>
+    <button id="btn-market-view" onclick="switchView('market')" style="padding: 12px 24px; background: transparent; color: #666; border: none; border-bottom: 3px solid transparent; font-size: 14px; font-weight: 600; cursor: pointer;">
+      Market Overview (128 Subnets)
+    </button>
+  </div>
+
+  <!-- My Positions View (default visible) -->
+  <div id="positions-view">
   <div class="filter-bar">
     <span class="filter-label">Show:</span>
     <button class="filter-btn buy" onclick="toggleFilter('buy')">🔵 Buy</button>
@@ -234,6 +250,36 @@
       </tbody>
     </table>
   </div>
+  </div>
+  <!-- End My Positions View -->
+
+  <!-- Market Overview (hidden by default) -->
+  <div id="market-view" style="display: none;">
+    <div style="margin-bottom: 1rem; padding: 12px; background: #f9fafb; border-radius: 8px; font-size: 13px; color: #666;">
+      <strong>Market Overview:</strong> All 128 subnets with simplified opportunity scores (Root 40% + 7d Trend 30% + 30d Trend 30%). Your held positions are highlighted with 📍. Click column headers to sort.
+    </div>
+    
+    <div style="overflow-x: auto;">
+      <table id="market-table" style="width: 100%; border-collapse: collapse; font-size: 13px;">
+        <thead>
+          <tr style="background: #f9fafb; border-bottom: 2px solid #e5e5e3;">
+            <th onclick="sortMarket('netuid')" style="padding: 12px; text-align: left; cursor: pointer; user-select: none;">Subnet ↕</th>
+            <th onclick="sortMarket('name')" style="padding: 12px; text-align: left; cursor: pointer; user-select: none;">Name ↕</th>
+            <th onclick="sortMarket('price')" style="padding: 12px; text-align: right; cursor: pointer; user-select: none;">Price (τ) ↕</th>
+            <th onclick="sortMarket('change_24h')" style="padding: 12px; text-align: right; cursor: pointer; user-select: none;">24h ↕</th>
+            <th onclick="sortMarket('change_7d')" style="padding: 12px; text-align: right; cursor: pointer; user-select: none;">7d ↕</th>
+            <th onclick="sortMarket('change_30d')" style="padding: 12px; text-align: right; cursor: pointer; user-select: none;">30d ↕</th>
+            <th onclick="sortMarket('emission_pct')" style="padding: 12px; text-align: right; cursor: pointer; user-select: none;">Emission % ↕</th>
+            <th onclick="sortMarket('score')" style="padding: 12px; text-align: right; cursor: pointer; user-select: none;">Score ↕</th>
+          </tr>
+        </thead>
+        <tbody id="market-table-body">
+          <tr><td colspan="8" style="padding:20px 12px; text-align: center; color: #999;">Loading market data...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <!-- End Market Overview -->
 
   <div class="footer">
     <div>
@@ -265,6 +311,13 @@ let sortDirection = 'desc';
 
 // Filter state (null = show all, string = show only that action)
 let activeFilter = null;
+
+// Market view state
+let marketData = [];
+let marketSortField = 'score';
+let marketSortAsc = false;
+let currentView = 'positions';
+let heldNetuids = new Set();
 
 // ── Portfolio delta tracking ─────────────────────────────────────────────────
 
@@ -1415,6 +1468,14 @@ async function loadAll() {
 
   try {
     const json = await loadCache();
+    
+    // Load market data
+    marketData = json.all_subnets || [];
+    heldNetuids = new Set((json.positions || []).map(p => p.netuid));
+    if (currentView === 'market') {
+      renderMarketTable();
+    }
+    
     render();
 
     if (json.status === 'cooldown' && json.cooldown_until) {
@@ -1452,6 +1513,99 @@ async function loadAll() {
 
   refreshTimer = setTimeout(loadAll, POLL_INTERVAL_MS);
   startCountdown();
+}
+
+// ── Market View Functions ────────────────────────────────────────────────────
+
+function switchView(view) {
+  currentView = view;
+  
+  if (view === 'positions') {
+    document.getElementById('positions-view').style.display = 'block';
+    document.getElementById('market-view').style.display = 'none';
+    document.getElementById('btn-my-positions').style.background = '#2563eb';
+    document.getElementById('btn-my-positions').style.color = '#fff';
+    document.getElementById('btn-my-positions').style.borderBottom = '3px solid #2563eb';
+    document.getElementById('btn-market-view').style.background = 'transparent';
+    document.getElementById('btn-market-view').style.color = '#666';
+    document.getElementById('btn-market-view').style.borderBottom = '3px solid transparent';
+  } else {
+    document.getElementById('positions-view').style.display = 'none';
+    document.getElementById('market-view').style.display = 'block';
+    document.getElementById('btn-my-positions').style.background = 'transparent';
+    document.getElementById('btn-my-positions').style.color = '#666';
+    document.getElementById('btn-my-positions').style.borderBottom = '3px solid transparent';
+    document.getElementById('btn-market-view').style.background = '#2563eb';
+    document.getElementById('btn-market-view').style.color = '#fff';
+    document.getElementById('btn-market-view').style.borderBottom = '3px solid #2563eb';
+    renderMarketTable();
+  }
+}
+
+function sortMarket(field) {
+  if (marketSortField === field) {
+    marketSortAsc = !marketSortAsc;
+  } else {
+    marketSortField = field;
+    marketSortAsc = false;
+  }
+  renderMarketTable();
+}
+
+function renderMarketTable() {
+  if (!marketData || marketData.length === 0) return;
+  
+  // Sort data
+  const sorted = [...marketData].sort((a, b) => {
+    let aVal = a[marketSortField];
+    let bVal = b[marketSortField];
+    
+    // Handle nulls
+    if (aVal === null || aVal === undefined) return 1;
+    if (bVal === null || bVal === undefined) return -1;
+    
+    // String comparison for name
+    if (marketSortField === 'name') {
+      aVal = (aVal || '').toLowerCase();
+      bVal = (bVal || '').toLowerCase();
+      return marketSortAsc ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+    }
+    
+    // Numeric comparison
+    return marketSortAsc ? aVal - bVal : bVal - aVal;
+  });
+  
+  const tbody = document.getElementById('market-table-body');
+  tbody.innerHTML = '';
+  
+  sorted.forEach(subnet => {
+    const isHeld = heldNetuids.has(subnet.netuid);
+    const row = document.createElement('tr');
+    row.style.borderBottom = '1px solid #f0f0f0';
+    if (isHeld) {
+      row.style.background = '#eff6ff';
+      row.style.fontWeight = '600';
+    }
+    
+    const formatChange = (val) => {
+      if (val === null || val === undefined) return '—';
+      const color = val >= 0 ? '#16a34a' : '#dc2626';
+      return `<span style="color: ${color}">${val >= 0 ? '+' : ''}${val.toFixed(1)}%</span>`;
+    };
+    
+    row.innerHTML = `
+      <td style="padding: 10px;">${isHeld ? '📍 ' : ''}SN${subnet.netuid}</td>
+      <td style="padding: 10px;">${subnet.name || '—'}</td>
+      <td style="padding: 10px; text-align: right;">${subnet.price !== null ? 'τ' + subnet.price.toFixed(4) : '—'}</td>
+      <td style="padding: 10px; text-align: right;">${formatChange(subnet.change_24h)}</td>
+      <td style="padding: 10px; text-align: right;">${formatChange(subnet.change_7d)}</td>
+      <td style="padding: 10px; text-align: right;">${formatChange(subnet.change_30d)}</td>
+      <td style="padding: 10px; text-align: right;">${subnet.emission_pct !== null ? subnet.emission_pct.toFixed(2) + '%' : '—'}</td>
+      <td style="padding: 10px; text-align: right;"><strong>${subnet.score !== null ? subnet.score.toFixed(1) : '—'}</strong></td>
+    `;
+    
+    tbody.appendChild(row);
+  });
 }
 
 async function manualRefresh() {

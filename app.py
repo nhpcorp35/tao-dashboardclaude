@@ -18,7 +18,7 @@ HEADERS = {"Authorization": TAOSTATS_API_KEY}
 
 # Rate limit: Playing it safe with 30 req/min (2 second gap between requests)
 REQUEST_GAP = 2
-CACHE_TTL = 60 * 60  # Refresh every 60 minutes to stay under 50k monthly credits
+CACHE_TTL = 3 * 60 * 60  # Refresh every 3 hours for market view (all 128 subnets)
 MAX_RETRIES = 3
 RETRY_BACKOFF = 10
 COOLDOWN_MINUTES = 5
@@ -63,6 +63,7 @@ _cache = {
     "pool": {},
     "yield": {},
     "flow": {},
+    "all_subnets": [],  # Market view: all 128 subnets with simplified scoring
     "tao_price": None,
     "pool_updated": {},
     "yield_updated": {},
@@ -330,6 +331,61 @@ def fetch_subnet_data(netuid):
     return (netuid, 3 - errors, errors)
 
 
+def calculate_simplified_score(subnet):
+    """
+    Calculate opportunity score for non-held subnets.
+    Uses: Root emission (40%) + 7d trend (30%) + 30d trend (30%)
+    Returns score 0-100.
+    """
+    score = 0
+    
+    # Root emission (40 points max)
+    emission_pct = subnet.get("emission_pct")
+    if emission_pct is not None:
+        # Normalize: 0.1% = 10 points, 1% = 40 points (capped)
+        score += min(emission_pct * 40, 40)
+    
+    # 7d trend (30 points max)
+    change_7d = subnet.get("change_7d")
+    if change_7d is not None:
+        # Normalize: +10% = 20 points, +20% = 30 points (capped)
+        # Negative changes score 0
+        score += max(0, min(change_7d * 1.5, 30))
+    
+    # 30d trend (30 points max)
+    change_30d = subnet.get("change_30d")
+    if change_30d is not None:
+        # Normalize: +10% = 15 points, +20% = 30 points (capped)
+        score += max(0, min(change_30d * 1.5, 30))
+    
+    return round(score, 1)
+
+
+def fetch_all_subnets_pool():
+    """
+    Fetch pool data for all 128 subnets.
+    Returns list of subnet objects with simplified scores.
+    """
+    all_subnets = []
+    
+    for netuid in range(1, 129):  # Subnets 1-128 (skipping 0=root)
+        try:
+            raw = taostats_get(f"{TAOSTATS_BASE}/api/dtao/pool/latest/v1?netuid={netuid}")
+            subnet = parse_pool(raw, netuid)
+            
+            # Add simplified score
+            subnet["score"] = calculate_simplified_score(subnet)
+            all_subnets.append(subnet)
+            
+            app.logger.info("SN%s pool fetched (score: %.1f)", netuid, subnet["score"])
+        except Exception as e:
+            app.logger.warning("SN%s pool failed: %s", netuid, e)
+            # Continue with other subnets
+            continue
+    
+    return all_subnets
+
+
 def fetch_all_data():
     """Fetch wallet + all subnet data with parallel processing."""
     # Check cooldown status
@@ -342,7 +398,7 @@ def fetch_all_data():
             _cache["cooldown_until"] = (datetime.now() + timedelta(seconds=seconds_left)).isoformat()
         return
     
-    app.logger.info("Cache refresh starting (sequential mode - 1 worker)...")
+    app.logger.info("Cache refresh starting (market view: 128 subnets + detailed data for held positions)...")
     with _cache_lock:
         _cache["status"] = "refreshing"
         _cache["error"] = None
@@ -364,6 +420,13 @@ def fetch_all_data():
         with _cache_lock:
             _cache["tao_price"] = tao_price
         app.logger.info("TAO price: $%s", tao_price if tao_price else "N/A")
+
+        # Market view: Fetch pool data for ALL 128 subnets
+        app.logger.info("Fetching market view (all 128 subnets)...")
+        all_subnets = fetch_all_subnets_pool()
+        with _cache_lock:
+            _cache["all_subnets"] = all_subnets
+        app.logger.info("Market view cached: %d subnets", len(all_subnets))
 
         # Per-subnet data (parallel)
         total_success = 0
@@ -433,6 +496,7 @@ def get_cache():
             "pool": _cache["pool"],
             "yield": _cache["yield"],
             "flow": _cache["flow"],
+            "all_subnets": _cache["all_subnets"],  # Market view: all 128 subnets
             "tao_price": _cache["tao_price"],
             "pool_updated": _cache["pool_updated"],
             "yield_updated": _cache["yield_updated"],
