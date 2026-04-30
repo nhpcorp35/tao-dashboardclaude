@@ -18,7 +18,7 @@ HEADERS = {"Authorization": TAOSTATS_API_KEY}
 
 # Rate limit: Playing it safe with 30 req/min (2 second gap between requests)
 REQUEST_GAP = 2
-CACHE_TTL = 10 * 60  # Refresh every 10 minutes to stay under rate limits
+CACHE_TTL = 60 * 60  # Refresh every 60 minutes to stay under 50k monthly credits
 MAX_RETRIES = 3
 RETRY_BACKOFF = 10
 COOLDOWN_MINUTES = 5
