@@ -377,10 +377,12 @@ def run_daily_scan(held_netuids):
     """
     Scan all 128 subnets with full scoring (pool + flow).
     Returns the top-scoring subnet NOT currently held.
+    Uses 5-second gap between requests to avoid rate limits.
     """
-    app.logger.info("Running daily scan: all 128 subnets with Flow scoring...")
+    app.logger.info("Running daily scan: all 128 subnets with Flow scoring (5-sec gaps)...")
     
     candidates = []
+    SCAN_GAP = 5  # Longer gap for daily scan to avoid rate limits
     
     for netuid in range(1, 129):  # Subnets 1-128
         if netuid in held_netuids:
@@ -390,10 +392,12 @@ def run_daily_scan(held_netuids):
             # Fetch pool data
             pool_raw = taostats_get(f"{TAOSTATS_BASE}/api/dtao/pool/latest/v1?netuid={netuid}")
             pool_data = parse_pool(pool_raw, netuid)
+            time.sleep(SCAN_GAP)  # Wait before next request
             
             # Fetch flow data
             flow_raw = taostats_get(f"{TAOSTATS_BASE}/api/dtao/flow/latest/v1?netuid={netuid}")
             flow_data = parse_flow(flow_raw)
+            time.sleep(SCAN_GAP)  # Wait before next subnet
             
             # Calculate full score
             score = calculate_full_score(pool_data, flow_data)
@@ -413,6 +417,7 @@ def run_daily_scan(held_netuids):
             
         except Exception as e:
             app.logger.warning("SN%s scan failed: %s", netuid, e)
+            time.sleep(SCAN_GAP)  # Wait even on error
             continue
     
     # Sort by score and return top pick
