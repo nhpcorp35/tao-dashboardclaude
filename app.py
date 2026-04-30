@@ -63,7 +63,8 @@ _cache = {
     "pool": {},
     "yield": {},
     "flow": {},
-    "all_subnets": [],  # Market view: all 128 subnets with simplified scoring
+    "daily_scan": None,  # Daily top pick with full scoring
+    "daily_scan_timestamp": None,  # When last scan ran
     "tao_price": None,
     "pool_updated": {},
     "yield_updated": {},
@@ -331,59 +332,98 @@ def fetch_subnet_data(netuid):
     return (netuid, 3 - errors, errors)
 
 
-def calculate_simplified_score(subnet):
+def calculate_full_score(pool_data, flow_data):
     """
-    Calculate opportunity score for non-held subnets.
-    Uses: Root emission (40%) + 7d trend (30%) + 30d trend (30%)
+    Calculate full opportunity score with Flow included.
+    Uses same weights as held positions:
+    - Flow: 30%
+    - Root emission: 25%
+    - 7d trend: 10%
+    - 30d trend: 10%
     Returns score 0-100.
     """
     score = 0
     
-    # Root emission (40 points max)
-    emission_pct = subnet.get("emission_pct")
+    # Flow (30 points max)
+    if flow_data:
+        net_flow = flow_data.get("net_flow_7d", 0)
+        # Positive flow = good, negative = bad
+        # Normalize: +100 TAO = 30 points, scale proportionally
+        flow_points = min(max(net_flow / 100 * 30, -30), 30)
+        score += max(0, flow_points)  # Don't go negative
+    
+    # Root emission (25 points max)
+    emission_pct = pool_data.get("emission_pct")
     if emission_pct is not None:
-        # Normalize: 0.1% = 10 points, 1% = 40 points (capped)
-        score += min(emission_pct * 40, 40)
+        # Normalize: 1% = 25 points (capped)
+        score += min(emission_pct * 25, 25)
     
-    # 7d trend (30 points max)
-    change_7d = subnet.get("change_7d")
+    # 7d trend (10 points max)
+    change_7d = pool_data.get("change_7d")
     if change_7d is not None:
-        # Normalize: +10% = 20 points, +20% = 30 points (capped)
-        # Negative changes score 0
-        score += max(0, min(change_7d * 1.5, 30))
+        # +20% = 10 points (capped), negative = 0
+        score += max(0, min(change_7d * 0.5, 10))
     
-    # 30d trend (30 points max)
-    change_30d = subnet.get("change_30d")
+    # 30d trend (10 points max)
+    change_30d = pool_data.get("change_30d")
     if change_30d is not None:
-        # Normalize: +10% = 15 points, +20% = 30 points (capped)
-        score += max(0, min(change_30d * 1.5, 30))
+        # +20% = 10 points (capped), negative = 0
+        score += max(0, min(change_30d * 0.5, 10))
     
     return round(score, 1)
 
 
-def fetch_all_subnets_pool():
+def run_daily_scan(held_netuids):
     """
-    Fetch pool data for all 128 subnets.
-    Returns list of subnet objects with simplified scores.
+    Scan all 128 subnets with full scoring (pool + flow).
+    Returns the top-scoring subnet NOT currently held.
     """
-    all_subnets = []
+    app.logger.info("Running daily scan: all 128 subnets with Flow scoring...")
     
-    for netuid in range(1, 129):  # Subnets 1-128 (skipping 0=root)
+    candidates = []
+    
+    for netuid in range(1, 129):  # Subnets 1-128
+        if netuid in held_netuids:
+            continue  # Skip subnets user already holds
+        
         try:
-            raw = taostats_get(f"{TAOSTATS_BASE}/api/dtao/pool/latest/v1?netuid={netuid}")
-            subnet = parse_pool(raw, netuid)
+            # Fetch pool data
+            pool_raw = taostats_get(f"{TAOSTATS_BASE}/api/dtao/pool/latest/v1?netuid={netuid}")
+            pool_data = parse_pool(pool_raw, netuid)
             
-            # Add simplified score
-            subnet["score"] = calculate_simplified_score(subnet)
-            all_subnets.append(subnet)
+            # Fetch flow data
+            flow_raw = taostats_get(f"{TAOSTATS_BASE}/api/dtao/flow/latest/v1?netuid={netuid}")
+            flow_data = parse_flow(flow_raw)
             
-            app.logger.info("SN%s pool fetched (score: %.1f)", netuid, subnet["score"])
+            # Calculate full score
+            score = calculate_full_score(pool_data, flow_data)
+            
+            candidates.append({
+                "netuid": netuid,
+                "name": pool_data.get("name"),
+                "price": pool_data.get("price"),
+                "emission_pct": pool_data.get("emission_pct"),
+                "change_7d": pool_data.get("change_7d"),
+                "change_30d": pool_data.get("change_30d"),
+                "net_flow_7d": flow_data.get("net_flow_7d") if flow_data else None,
+                "score": score,
+            })
+            
+            app.logger.info("SN%s scanned (score: %.1f)", netuid, score)
+            
         except Exception as e:
-            app.logger.warning("SN%s pool failed: %s", netuid, e)
-            # Continue with other subnets
+            app.logger.warning("SN%s scan failed: %s", netuid, e)
             continue
     
-    return all_subnets
+    # Sort by score and return top pick
+    if candidates:
+        candidates.sort(key=lambda x: x["score"], reverse=True)
+        top_pick = candidates[0]
+        app.logger.info("Daily scan complete. Top pick: SN%s (score: %.1f)", 
+                       top_pick["netuid"], top_pick["score"])
+        return top_pick
+    
+    return None
 
 
 def fetch_all_data():
@@ -398,7 +438,7 @@ def fetch_all_data():
             _cache["cooldown_until"] = (datetime.now() + timedelta(seconds=seconds_left)).isoformat()
         return
     
-    app.logger.info("Cache refresh starting (market view: 128 subnets + detailed data for held positions)...")
+    app.logger.info("Cache refresh starting (daily scan + detailed data for held positions)...")
     with _cache_lock:
         _cache["status"] = "refreshing"
         _cache["error"] = None
@@ -421,12 +461,31 @@ def fetch_all_data():
             _cache["tao_price"] = tao_price
         app.logger.info("TAO price: $%s", tao_price if tao_price else "N/A")
 
-        # Market view: Fetch pool data for ALL 128 subnets
-        app.logger.info("Fetching market view (all 128 subnets)...")
-        all_subnets = fetch_all_subnets_pool()
+        # Daily scan: Check if we need to run (once per 24 hours)
+        should_scan = False
         with _cache_lock:
-            _cache["all_subnets"] = all_subnets
-        app.logger.info("Market view cached: %d subnets", len(all_subnets))
+            last_scan = _cache["daily_scan_timestamp"]
+            if last_scan is None:
+                should_scan = True
+            else:
+                hours_since_scan = (time.time() - last_scan) / 3600
+                if hours_since_scan >= 24:
+                    should_scan = True
+        
+        if should_scan:
+            app.logger.info("Running daily scan (24+ hours since last scan)...")
+            top_pick = run_daily_scan(netuids)
+            with _cache_lock:
+                _cache["daily_scan"] = top_pick
+                _cache["daily_scan_timestamp"] = time.time()
+            if top_pick:
+                app.logger.info("Daily scan complete: SN%s (score: %.1f)", 
+                               top_pick["netuid"], top_pick["score"])
+        else:
+            with _cache_lock:
+                last_scan = _cache["daily_scan_timestamp"]
+            hours_ago = (time.time() - last_scan) / 3600 if last_scan else 0
+            app.logger.info("Daily scan skipped (last scan %.1f hours ago)", hours_ago)
 
         # Per-subnet data (parallel)
         total_success = 0
@@ -496,7 +555,8 @@ def get_cache():
             "pool": _cache["pool"],
             "yield": _cache["yield"],
             "flow": _cache["flow"],
-            "all_subnets": _cache["all_subnets"],  # Market view: all 128 subnets
+            "daily_scan": _cache["daily_scan"],  # Daily top pick
+            "daily_scan_timestamp": _cache["daily_scan_timestamp"],
             "tao_price": _cache["tao_price"],
             "pool_updated": _cache["pool_updated"],
             "yield_updated": _cache["yield_updated"],
