@@ -342,7 +342,7 @@ def fetch_all_data():
             _cache["cooldown_until"] = (datetime.now() + timedelta(seconds=seconds_left)).isoformat()
         return
     
-    app.logger.info("Cache refresh starting (parallel mode with 2 workers)...")
+    app.logger.info("Cache refresh starting (sequential mode - 1 worker)...")
     with _cache_lock:
         _cache["status"] = "refreshing"
         _cache["error"] = None
@@ -369,7 +369,7 @@ def fetch_all_data():
         total_success = 0
         total_errors = 0
         
-        with ThreadPoolExecutor(max_workers=2) as executor:
+        with ThreadPoolExecutor(max_workers=1) as executor:
             futures = {executor.submit(fetch_subnet_data, netuid): netuid 
                       for netuid in netuids}
             
