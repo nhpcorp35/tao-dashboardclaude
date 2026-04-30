@@ -522,16 +522,12 @@ function renderDailyPick(json) {
     return;
   }
   
-  // Check if user already holds this subnet
-  const alreadyHeld = walletPositions.some(p => p.netuid === dailyScan.netuid);
-  if (alreadyHeld) {
-    pickEl.style.display = 'none';
-    return;
-  }
-  
   const name = dailyScan.name || `SN${dailyScan.netuid}`;
   const score = dailyScan.score || 0;
   const price = dailyScan.price || 0;
+  
+  // Check if user already holds this subnet
+  const alreadyHeld = walletPositions.some(p => p.netuid === dailyScan.netuid);
   
   // Build reason based on available data
   const reasons = [];
@@ -565,8 +561,16 @@ function renderDailyPick(json) {
     }
   }
   
-  pickMain.innerHTML = `<a href="https://taostats.io/subnet/${dailyScan.netuid}" target="_blank" rel="noopener" style="color:#fff;">SN${dailyScan.netuid} — ${name}</a> <span style="opacity:0.8;">(τ${price.toFixed(4)}, score: ${score})</span>`;
-  pickReason.textContent = reasonStr.charAt(0).toUpperCase() + reasonStr.slice(1);
+  if (alreadyHeld) {
+    // User already holds the top pick - celebrate!
+    pickMain.innerHTML = `✅ <a href="https://taostats.io/subnet/${dailyScan.netuid}" target="_blank" rel="noopener" style="color:#fff;">SN${dailyScan.netuid} — ${name}</a> <span style="opacity:0.8;">(τ${price.toFixed(4)}, score: ${score})</span>`;
+    pickReason.textContent = `You're already positioned in today's top opportunity! ${reasonStr.charAt(0).toUpperCase() + reasonStr.slice(1)}`;
+  } else {
+    // Top pick is something user doesn't hold - suggest it
+    pickMain.innerHTML = `<a href="https://taostats.io/subnet/${dailyScan.netuid}" target="_blank" rel="noopener" style="color:#fff;">SN${dailyScan.netuid} — ${name}</a> <span style="opacity:0.8;">(τ${price.toFixed(4)}, score: ${score})</span>`;
+    pickReason.textContent = reasonStr.charAt(0).toUpperCase() + reasonStr.slice(1);
+  }
+  
   pickUpdated.textContent = scanAgoText;
   pickEl.style.display = 'block';
 }
