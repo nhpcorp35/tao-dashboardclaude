@@ -1417,6 +1417,19 @@ async function loadAll() {
     const json = await loadCache();
     render();
 
+    if (json.status === 'cooldown' && json.cooldown_until) {
+      const cooldownUntil = new Date(json.cooldown_until);
+      const secondsLeft = Math.max(0, Math.round((cooldownUntil - new Date()) / 1000));
+      const minutesLeft = Math.ceil(secondsLeft / 60);
+      
+      document.getElementById('status-bar').innerHTML = 
+        `⏸️ Rate limited - paused for ${minutesLeft} more minute${minutesLeft !== 1 ? 's' : ''} to avoid API limits`;
+      
+      // Check again in 30 seconds
+      refreshTimer = setTimeout(loadAll, 30_000);
+      return;
+    }
+
     if (json.status === 'pending' || json.status === 'refreshing') {
       const msg = json.status === 'pending'
         ? 'Server is fetching data for the first time (~5 min)...'
@@ -1444,7 +1457,15 @@ async function loadAll() {
 async function manualRefresh() {
   document.getElementById('status-bar').innerHTML = 'Requesting refresh...';
   try {
-    await fetch('/api/cache/refresh', { method: 'POST' });
+    const response = await fetch('/api/cache/refresh', { method: 'POST' });
+    const data = await response.json();
+    
+    if (response.status === 429) {
+      // In cooldown
+      document.getElementById('status-bar').innerHTML = `⏸️ ${data.message}`;
+      return;
+    }
+    
     if (refreshTimer) clearTimeout(refreshTimer);
     refreshTimer = setTimeout(loadAll, 5_000);
     document.getElementById('status-bar').innerHTML = 'Refresh started — data arriving in ~5 min...';
