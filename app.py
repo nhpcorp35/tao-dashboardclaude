@@ -303,7 +303,7 @@ def fetch_subnet_data(netuid):
                 page_data = []
             yield_data.extend(page_data)
             pagination = raw.get("pagination", {})
-            if pagination.get("next_page") is None or page >= 5:
+            if pagination.get("next_page") is None or page >= 1:  # Only fetch first 100 validators
                 break
             page += 1
         with _cache_lock:
