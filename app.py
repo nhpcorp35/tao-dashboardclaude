@@ -16,8 +16,8 @@ TAOSTATS_BASE = "https://api.taostats.io"
 COLDKEY = os.environ.get("COLDKEY", "5Cexeg7deNSTzsqMKuBmvc9JHGHymuL4SdjAA9Jw4eeHUphb")
 HEADERS = {"Authorization": TAOSTATS_API_KEY}
 
-# Rate limit: 60 req/min on Standard tier
-REQUEST_GAP = 1
+# Rate limit: Playing it safe with 30 req/min (2 second gap between requests)
+REQUEST_GAP = 2
 CACHE_TTL = 10 * 60  # Refresh every 10 minutes to stay under rate limits
 MAX_RETRIES = 3
 RETRY_BACKOFF = 10
