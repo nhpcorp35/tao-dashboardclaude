@@ -286,7 +286,7 @@
       <div class="footer-meta" id="last-updated">—</div>
       <div class="next-refresh" id="next-refresh"></div>
     </div>
-    <button class="refresh-btn" onclick="manualRefresh()">Refresh now</button>
+    <button class="refresh-btn" onclick="refreshNow()">Refresh now</button>
   </div>
 </div>
 
@@ -1608,7 +1608,7 @@ function renderMarketTable() {
   });
 }
 
-async function manualRefresh() {
+async function refreshNow() {
   document.getElementById('status-bar').innerHTML = 'Requesting refresh...';
   try {
     const response = await fetch('/api/cache/refresh', { method: 'POST' });
