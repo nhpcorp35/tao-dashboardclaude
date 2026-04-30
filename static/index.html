@@ -1529,7 +1529,7 @@ async function loadAll() {
   startCountdown();
 }
 
-async function manualRefresh() {
+async function refreshNow() {
   document.getElementById('status-bar').innerHTML = 'Requesting refresh...';
   try {
     const response = await fetch('/api/cache/refresh', { method: 'POST' });
