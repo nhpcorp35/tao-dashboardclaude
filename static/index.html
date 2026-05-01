@@ -225,6 +225,7 @@
       <thead>
         <tr>
           <th>Subnet</th>
+          <th class="sortable" onclick="sortBy('alpha_change_24h')">24h Alpha Δ <span class="sort-indicator" id="sort-alpha_change_24h"></span></th>
           <th class="sortable" onclick="sortBy('price')">Alpha price <span class="sort-indicator" id="sort-price"></span></th>
           <th class="sortable" onclick="sortBy('change_24h')">24h % <span class="sort-indicator" id="sort-change_24h"></span></th>
           <th class="sortable" onclick="sortBy('change_7d')">7d % <span class="sort-indicator" id="sort-change_7d"></span></th>
@@ -237,7 +238,7 @@
         </tr>
       </thead>
       <tbody id="tbody">
-        <tr><td colspan="10" class="loading" style="padding:20px 12px">Loading your wallet positions...</td></tr>
+        <tr><td colspan="11" class="loading" style="padding:20px 12px">Loading your wallet positions...</td></tr>
       </tbody>
     </table>
   </div>
@@ -896,6 +897,9 @@ function getSortValue(p, column) {
   const yd = yieldData[p.netuid] || {};
   
   switch(column) {
+    case 'alpha_change_24h':
+      const alphaChanges = getAlphaChanges(p.netuid);
+      return alphaChanges && alphaChanges.change24h !== null ? alphaChanges.change24h : -Infinity;
     case 'price': return pd.price ?? -Infinity;
     case 'change_24h': return pd.change_24h ?? -Infinity;
     case 'change_7d': return pd.change_7d ?? -Infinity;
@@ -1084,6 +1088,17 @@ function render() {
         ${subnetName ? `<div class="subnet-name">${subnetName}</div>` : ''}
         ${validatorCount > 1 ? `<div style="font-size:10px;color:#aaa">${validatorCount} validators</div>` : ''}
       </td>
+      ${(() => {
+        const alphaChanges = getAlphaChanges(p.netuid);
+        if (!alphaChanges || alphaChanges.change24h === null) {
+          return '<td style="color:#ccc">—</td>';
+        }
+        const change = alphaChanges.change24h;
+        const pct = alphaChanges.pct24h;
+        const color = change >= 0 ? '#16a34a' : '#dc2626';
+        const sign = change >= 0 ? '+' : '';
+        return `<td style="color:${color}">${sign}${change.toFixed(2)} α (${sign}${pct.toFixed(1)}%)</td>`;
+      })()}
       <td>${priceStr}</td>
       <td>${fmtChange(pd.change_24h)}</td>
       <td>${fmtChange(pd.change_7d)}</td>
@@ -1097,7 +1112,7 @@ function render() {
 
     if (p.validators && p.validators.length) {
       html += `<tbody class="validator-rows" id="${expandId}">`;
-      html += `<tr class="validator-row"><td class="validator-label" colspan="10">↳ Validators</td></tr>`;
+      html += `<tr class="validator-row"><td class="validator-label" colspan="11">↳ Validators</td></tr>`;
       p.validators.forEach(v => {
         const vyData = (yd.validators || []).find(yv => yv.hotkey === v.hotkey);
         const vApy = vyData ? fmtApy(vyData.seven_day_apy) : '<span style="color:#ccc">—</span>';
@@ -1326,6 +1341,101 @@ function getPositionGains(netuid) {
   }
   
   return { gain7d, gain30d };
+}
+
+function getAlphaChanges(netuid) {
+  const snapshots = HistoryStorage.getAllSnapshots();
+  if (snapshots.length < 2) return null;
+  
+  // Get latest snapshot with position data
+  const latest = snapshots[snapshots.length - 1];
+  if (!latest.positions) return null;
+  
+  const latestPos = latest.positions.find(p => p.netuid === netuid);
+  if (!latestPos || !latestPos.alpha_balance) return null;
+  
+  // Calculate 24h alpha change
+  const oneDayAgo = new Date();
+  oneDayAgo.setDate(oneDayAgo.getDate() - 1);
+  const snapshot24h = snapshots
+    .filter(s => new Date(s.date) <= oneDayAgo && s.positions)
+    .pop();
+  
+  let change24h = null, pct24h = null;
+  if (snapshot24h) {
+    const oldPos = snapshot24h.positions.find(p => p.netuid === netuid);
+    if (oldPos && oldPos.alpha_balance > 0) {
+      change24h = latestPos.alpha_balance - oldPos.alpha_balance;
+      pct24h = (change24h / oldPos.alpha_balance) * 100;
+    }
+  }
+  
+  // Calculate 30d alpha change
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  const snapshot30d = snapshots
+    .filter(s => new Date(s.date) <= thirtyDaysAgo && s.positions)
+    .pop();
+  
+  let change30d = null, pct30d = null;
+  if (snapshot30d) {
+    const oldPos = snapshot30d.positions.find(p => p.netuid === netuid);
+    if (oldPos && oldPos.alpha_balance > 0) {
+      change30d = latestPos.alpha_balance - oldPos.alpha_balance;
+      pct30d = (change30d / oldPos.alpha_balance) * 100;
+    }
+  }
+  
+  // Calculate 60d alpha change
+  const sixtyDaysAgo = new Date();
+  sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+  const snapshot60d = snapshots
+    .filter(s => new Date(s.date) <= sixtyDaysAgo && s.positions)
+    .pop();
+  
+  let change60d = null, pct60d = null;
+  if (snapshot60d) {
+    const oldPos = snapshot60d.positions.find(p => p.netuid === netuid);
+    if (oldPos && oldPos.alpha_balance > 0) {
+      change60d = latestPos.alpha_balance - oldPos.alpha_balance;
+      pct60d = (change60d / oldPos.alpha_balance) * 100;
+    }
+  }
+  
+  // Calculate 90d alpha change
+  const ninetyDaysAgo = new Date();
+  ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+  const snapshot90d = snapshots
+    .filter(s => new Date(s.date) <= ninetyDaysAgo && s.positions)
+    .pop();
+  
+  let change90d = null, pct90d = null;
+  if (snapshot90d) {
+    const oldPos = snapshot90d.positions.find(p => p.netuid === netuid);
+    if (oldPos && oldPos.alpha_balance > 0) {
+      change90d = latestPos.alpha_balance - oldPos.alpha_balance;
+      pct90d = (change90d / oldPos.alpha_balance) * 100;
+    }
+  }
+  
+  // Calculate all-time alpha change (first snapshot)
+  const firstSnapshot = snapshots.find(s => s.positions);
+  let changeAllTime = null, pctAllTime = null;
+  if (firstSnapshot) {
+    const firstPos = firstSnapshot.positions.find(p => p.netuid === netuid);
+    if (firstPos && firstPos.alpha_balance > 0) {
+      changeAllTime = latestPos.alpha_balance - firstPos.alpha_balance;
+      pctAllTime = (changeAllTime / firstPos.alpha_balance) * 100;
+    }
+  }
+  
+  return { 
+    change24h, pct24h,
+    change30d, pct30d,
+    change60d, pct60d,
+    change90d, pct90d,
+    changeAllTime, pctAllTime
+  };
 }
 
 function showHistoryModal() {
