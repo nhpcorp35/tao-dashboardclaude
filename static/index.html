@@ -529,11 +529,8 @@ function renderDailyPick(json) {
   // Check if user already holds this subnet
   const alreadyHeld = walletPositions.some(p => p.netuid === dailyScan.netuid);
   
-  // Build reason based on available data
+  // Build reason based on available data (simplified scoring: no Flow)
   const reasons = [];
-  if (dailyScan.net_flow_7d != null && dailyScan.net_flow_7d > 0) {
-    reasons.push(`positive TAO flow (+${dailyScan.net_flow_7d.toFixed(0)} TAO)`);
-  }
   if (dailyScan.emission_pct != null && dailyScan.emission_pct >= 1) {
     reasons.push(`high root share (${dailyScan.emission_pct.toFixed(1)}%)`);
   }
@@ -546,7 +543,7 @@ function renderDailyPick(json) {
   
   const reasonStr = reasons.length > 0 
     ? reasons.join(', ') 
-    : `scored ${score} across all subnets`;
+    : `top opportunity score (${score}) based on root share and price trends`;
   
   // Calculate hours since scan
   let scanAgoText = '';

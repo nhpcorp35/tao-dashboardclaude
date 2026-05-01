@@ -332,6 +332,35 @@ def fetch_subnet_data(netuid):
     return (netuid, 3 - errors, errors)
 
 
+def calculate_simplified_score(pool_data):
+    """
+    Calculate simplified opportunity score without Flow.
+    Uses: Root emission (40%) + 7d trend (30%) + 30d trend (30%)
+    Returns score 0-100.
+    """
+    score = 0
+    
+    # Root emission (40 points max)
+    emission_pct = pool_data.get("emission_pct")
+    if emission_pct is not None:
+        # Normalize: 1% = 40 points (capped)
+        score += min(emission_pct * 40, 40)
+    
+    # 7d trend (30 points max)
+    change_7d = pool_data.get("change_7d")
+    if change_7d is not None:
+        # +20% = 30 points (capped), negative = 0
+        score += max(0, min(change_7d * 1.5, 30))
+    
+    # 30d trend (30 points max)
+    change_30d = pool_data.get("change_30d")
+    if change_30d is not None:
+        # +20% = 30 points (capped), negative = 0
+        score += max(0, min(change_30d * 1.5, 30))
+    
+    return round(score, 1)
+
+
 def calculate_full_score(pool_data, flow_data):
     """
     Calculate full opportunity score with Flow included.
@@ -375,11 +404,11 @@ def calculate_full_score(pool_data, flow_data):
 
 def run_daily_scan(held_netuids):
     """
-    Scan all 128 subnets with full scoring (pool + flow).
+    Scan all 128 subnets with simplified scoring (pool only, no flow).
     Returns the top-scoring subnet NOT currently held.
     Uses 5-second gap between requests to avoid rate limits.
     """
-    app.logger.info("Running daily scan: all 128 subnets with Flow scoring (5-sec gaps)...")
+    app.logger.info("Running daily scan: all 128 subnets with simplified scoring (Root + Trends)...")
     
     candidates = []
     SCAN_GAP = 5  # Longer gap for daily scan to avoid rate limits
@@ -389,18 +418,12 @@ def run_daily_scan(held_netuids):
             continue  # Skip subnets user already holds
         
         try:
-            # Fetch pool data
+            # Fetch pool data only (no Flow - most subnets don't have it)
             pool_raw = taostats_get(f"{TAOSTATS_BASE}/api/dtao/pool/latest/v1?netuid={netuid}")
             pool_data = parse_pool(pool_raw, netuid)
-            time.sleep(SCAN_GAP)  # Wait before next request
             
-            # Fetch flow data
-            flow_raw = taostats_get(f"{TAOSTATS_BASE}/api/dtao/flow/latest/v1?netuid={netuid}")
-            flow_data = parse_flow(flow_raw)
-            time.sleep(SCAN_GAP)  # Wait before next subnet
-            
-            # Calculate full score
-            score = calculate_full_score(pool_data, flow_data)
+            # Calculate simplified score (Root + Trends only)
+            score = calculate_simplified_score(pool_data)
             
             candidates.append({
                 "netuid": netuid,
@@ -409,11 +432,12 @@ def run_daily_scan(held_netuids):
                 "emission_pct": pool_data.get("emission_pct"),
                 "change_7d": pool_data.get("change_7d"),
                 "change_30d": pool_data.get("change_30d"),
-                "net_flow_7d": flow_data.get("net_flow_7d") if flow_data else None,
+                "net_flow_7d": None,  # Not available for daily scan
                 "score": score,
             })
             
             app.logger.info("SN%s scanned (score: %.1f)", netuid, score)
+            time.sleep(SCAN_GAP)  # Wait before next subnet
             
         except Exception as e:
             app.logger.warning("SN%s scan failed: %s", netuid, e)
