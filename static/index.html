@@ -1221,7 +1221,8 @@ class HistoryStorage {
       total_usd: data.total_usd,
       tao_price: data.tao_price,
       position_count: data.position_count,
-      actions: data.actions // {buy: 2, hold: 6, watch: 1, sell: 1}
+      actions: data.actions, // {buy: 2, hold: 6, watch: 1, sell: 1}
+      positions: data.positions  // ✅ FIX: Now saving positions array!
     };
     
     if (existingIndex >= 0) {
@@ -1292,7 +1293,7 @@ function saveCurrentSnapshot() {
     tao_price: taoPrice,
     position_count: positions.length,
     actions: actions,
-    positions: positionData  // Added per-position tracking
+    positions: positionData  // Pass positions to be saved
   });
 }
 
