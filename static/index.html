@@ -109,6 +109,15 @@
     .history-table tr:hover { background: #fafaf9; }
     .history-empty { text-align: center; padding: 48px 24px; color: #aaa; }
     
+    /* P/L Summary Card */
+    .pnl-summary { background: #fff; border: 1px solid #e5e5e3; border-radius: 12px; padding: 20px; margin-bottom: 1.6rem; }
+    .pnl-summary-title { font-size: 14px; font-weight: 600; margin-bottom: 16px; color: #1a1a1a; display: flex; align-items: center; gap: 8px; }
+    .pnl-summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
+    .pnl-stat { display: flex; flex-direction: column; gap: 4px; }
+    .pnl-stat-label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 0.05em; }
+    .pnl-stat-value { font-size: 18px; font-weight: 600; }
+    .pnl-stat-sub { font-size: 12px; color: #666; }
+    
     @media (max-width: 600px) {
       body { padding: 1rem 0.5rem; }
       .metric-value { font-size: 20px; }
@@ -164,6 +173,29 @@
     </div>
   </div>
 
+  <div class="pnl-summary" id="pnl-summary" style="display:none;">
+    <div class="pnl-summary-title">📊 Portfolio Performance</div>
+    <div class="pnl-summary-grid">
+      <div class="pnl-stat">
+        <div class="pnl-stat-label">Total Value</div>
+        <div class="pnl-stat-value" id="pnl-total-value">—</div>
+      </div>
+      <div class="pnl-stat">
+        <div class="pnl-stat-label">Unrealized P/L</div>
+        <div class="pnl-stat-value" id="pnl-unrealized">—</div>
+        <div class="pnl-stat-sub" id="pnl-unrealized-sub">—</div>
+      </div>
+      <div class="pnl-stat">
+        <div class="pnl-stat-label">Best Performer</div>
+        <div class="pnl-stat-value" style="font-size:15px" id="pnl-best">—</div>
+      </div>
+      <div class="pnl-stat">
+        <div class="pnl-stat-label">Worst Performer</div>
+        <div class="pnl-stat-value" style="font-size:15px" id="pnl-worst">—</div>
+      </div>
+    </div>
+  </div>
+
   <div class="recommendation" id="recommendation" style="display:none;">
     <div class="rec-label">Today's Strongest Add</div>
     <div class="rec-main" id="rec-main">—</div>
@@ -196,7 +228,7 @@
   </div>
 
   <div class="signal-key">
-    <div class="signal-key-title">Weighted signal scoring — hover dots for detail</div>
+    <div class="signal-key-title">Weighted signal scoring</div>
     <div class="signal-key-grid">
       <div class="signal-key-item"><div class="dot-num">1</div> 7d price change (10%)</div>
       <div class="signal-key-item"><div class="dot-num">2</div> 30d price change (10%)</div>
@@ -234,8 +266,8 @@
           <th class="sortable" onclick="sortBy('emission')">Root Emission Share <span class="sort-indicator" id="sort-emission"></span></th>
           <th class="sortable" onclick="sortBy('alpha_balance')">Position Size <span class="sort-indicator" id="sort-alpha_balance"></span></th>
           <th class="sortable" onclick="sortBy('tao_value')">TAO value <span class="sort-indicator" id="sort-tao_value"></span></th>
+          <th class="sortable" onclick="sortBy('pnl_pct')">P/L <span class="sort-indicator" id="sort-pnl_pct"></span></th>
           <th class="sortable" onclick="sortBy('action')">Action <span class="sort-indicator" id="sort-action"></span></th>
-          <th>Signals<br><span style="font-size:9px;color:#ccc;font-weight:400;letter-spacing:1px;">1  2  3  4  5</span></th>
         </tr>
       </thead>
       <tbody id="tbody">
@@ -271,6 +303,75 @@ const PORTFOLIO_STORAGE_KEY = 'tao_portfolio_history';
 let sortColumn = null;
 let sortDirection = 'desc';
 let activeFilter = null;
+
+const ENTRY_STORAGE_KEY = 'tao_position_entries';
+
+// Initialize or load entry points
+function initializeEntries() {
+  let entries = JSON.parse(localStorage.getItem(ENTRY_STORAGE_KEY) || '{}');
+  
+  if (Object.keys(entries).length === 0) {
+    // No entries exist - initialize from first snapshot
+    const history = JSON.parse(localStorage.getItem('tao_dashboard_history') || '[]');
+    
+    if (history.length > 0 && history[0].positions) {
+      history[0].positions.forEach(pos => {
+        const price = poolData[pos.netuid]?.price || (pos.tao_value / pos.alpha_balance);
+        entries[pos.netuid] = {
+          netuid: pos.netuid,
+          entry_date: history[0].date,
+          entry_alpha: pos.alpha_balance,
+          entry_price: price,
+          entry_tao_value: pos.tao_value,
+          entry_snapshot_index: 0
+        };
+      });
+      localStorage.setItem(ENTRY_STORAGE_KEY, JSON.stringify(entries));
+    }
+  }
+  
+  return entries;
+}
+
+// Add new position entry
+function addEntry(netuid, position) {
+  const entries = JSON.parse(localStorage.getItem(ENTRY_STORAGE_KEY) || '{}');
+  
+  if (!entries[netuid]) {
+    const price = poolData[netuid]?.price || (position.tao_value / position.alpha_balance);
+    entries[netuid] = {
+      netuid: netuid,
+      entry_date: getToday(),
+      entry_alpha: position.alpha_balance,
+      entry_price: price,
+      entry_tao_value: position.tao_value,
+      entry_snapshot_index: -1
+    };
+    localStorage.setItem(ENTRY_STORAGE_KEY, JSON.stringify(entries));
+  }
+}
+
+// Calculate P/L for a position
+function calculatePnL(netuid) {
+  const entries = JSON.parse(localStorage.getItem(ENTRY_STORAGE_KEY) || '{}');
+  const entry = entries[netuid];
+  
+  if (!entry) return null;
+  
+  const currentPos = walletPositions.find(p => p.netuid === netuid);
+  if (!currentPos) return { exited: true };
+  
+  const pnl_tao = currentPos.tao_value - entry.entry_tao_value;
+  const pnl_pct = ((currentPos.tao_value - entry.entry_tao_value) / entry.entry_tao_value) * 100;
+  
+  return {
+    entry_value: entry.entry_tao_value,
+    current_value: currentPos.tao_value,
+    pnl_tao: pnl_tao,
+    pnl_pct: pnl_pct,
+    entry_date: entry.entry_date
+  };
+}
 
 function getToday() {
   return new Date().toISOString().split('T')[0];
@@ -415,6 +516,82 @@ function renderDots(signals) {
     const cls = s.green === null ? 'dot-grey' : s.green ? 'dot-green' : 'dot-red';
     return `<div class="dot ${cls}" title="${i+1}. ${s.label}: ${s.value}"></div>`;
   }).join('') + '</div>';
+}
+
+function renderPnLSummary() {
+  const summaryEl = document.getElementById('pnl-summary');
+  const positions = walletPositions.filter(p => p.netuid !== 0);
+  
+  if (!positions.length) {
+    summaryEl.style.display = 'none';
+    return;
+  }
+  
+  let totalPnL = 0;
+  let totalEntry = 0;
+  let totalCurrent = 0;
+  let best = null;
+  let worst = null;
+  let bestPct = -Infinity;
+  let worstPct = Infinity;
+  
+  positions.forEach(p => {
+    const pnl = calculatePnL(p.netuid);
+    if (pnl && !pnl.exited) {
+      totalPnL += pnl.pnl_tao;
+      totalEntry += pnl.entry_value;
+      totalCurrent += pnl.current_value;
+      
+      if (pnl.pnl_pct > bestPct) {
+        bestPct = pnl.pnl_pct;
+        const pd = poolData[p.netuid] || {};
+        best = { netuid: p.netuid, name: pd.name || `SN${p.netuid}`, pnl: pnl.pnl_tao, pct: pnl.pnl_pct };
+      }
+      
+      if (pnl.pnl_pct < worstPct) {
+        worstPct = pnl.pnl_pct;
+        const pd = poolData[p.netuid] || {};
+        worst = { netuid: p.netuid, name: pd.name || `SN${p.netuid}`, pnl: pnl.pnl_tao, pct: pnl.pnl_pct };
+      }
+    }
+  });
+  
+  const totalPct = totalEntry > 0 ? (totalPnL / totalEntry) * 100 : 0;
+  const totalTao = walletPositions.reduce((sum, p) => sum + p.tao_value, 0);
+  const totalUsd = taoPrice ? totalTao * taoPrice : null;
+  
+  // Total Value
+  document.getElementById('pnl-total-value').textContent = fmtTao(totalTao, {decimals: 3});
+  
+  // Unrealized P/L
+  const pnlColor = totalPnL >= 0 ? '#16a34a' : '#dc2626';
+  const pnlSign = totalPnL >= 0 ? '+' : '';
+  const pnlEl = document.getElementById('pnl-unrealized');
+  pnlEl.innerHTML = `<span style="color:${pnlColor}">${pnlSign}${totalPnL.toFixed(3)} τ</span>`;
+  
+  const pnlSubEl = document.getElementById('pnl-unrealized-sub');
+  const usdStr = totalUsd ? ` ($${pnlSign}${Math.round(totalPnL * taoPrice).toLocaleString()})` : '';
+  pnlSubEl.innerHTML = `<span style="color:${pnlColor}">${pnlSign}${totalPct.toFixed(1)}%${usdStr}</span>`;
+  
+  // Best Performer
+  if (best) {
+    const bestSign = best.pnl >= 0 ? '+' : '';
+    document.getElementById('pnl-best').innerHTML = 
+      `<a href="https://taostats.io/subnet/${best.netuid}" target="_blank" rel="noopener" style="color:#16a34a;text-decoration:none;">${best.name}</a><br><span style="font-size:12px;color:#16a34a">${bestSign}${best.pnl.toFixed(3)} τ (${bestSign}${best.pct.toFixed(1)}%)</span>`;
+  } else {
+    document.getElementById('pnl-best').textContent = '—';
+  }
+  
+  // Worst Performer  
+  if (worst) {
+    const worstSign = worst.pnl >= 0 ? '+' : '';
+    document.getElementById('pnl-worst').innerHTML = 
+      `<a href="https://taostats.io/subnet/${worst.netuid}" target="_blank" rel="noopener" style="color:#dc2626;text-decoration:none;">${worst.name}</a><br><span style="font-size:12px;color:#dc2626">${worstSign}${worst.pnl.toFixed(3)} τ (${worstSign}${worst.pct.toFixed(1)}%)</span>`;
+  } else {
+    document.getElementById('pnl-worst').textContent = '—';
+  }
+  
+  summaryEl.style.display = 'block';
 }
 
 function renderRecommendation() {
@@ -572,9 +749,15 @@ function renderRiskPosition() {
       const redCount = signals.filter(s => s.green === false).length;
       const greenCount = signals.filter(s => s.green === true).length;
       
+      // Get subnet name, ensure it's not just "SN{netuid}"
+      let name = pd.name;
+      if (!name || name === `SN${p.netuid}`) {
+        name = `Subnet ${p.netuid}`;
+      }
+      
       return {
         netuid: p.netuid,
-        name: pd.name || `SN${p.netuid}`,
+        name: name,
         action,
         redCount,
         greenCount,
@@ -876,6 +1059,9 @@ function getSortValue(p, column) {
       const action = getAction(signals, p.netuid);
       const rank = { buy: 4, hold: 3, watch: 2, sell: 1 };
       return rank[action];
+    case 'pnl_pct':
+      const pnl = calculatePnL(p.netuid);
+      return pnl && !pnl.exited ? pnl.pnl_pct : -Infinity;
     default: return 0;
   }
 }
@@ -936,6 +1122,14 @@ function render() {
     document.getElementById('root-info').style.display = 'none';
     return;
   }
+
+  // Initialize entry tracking
+  initializeEntries();
+  
+  // Track new positions
+  walletPositions.forEach(p => {
+    if (p.netuid !== 0) addEntry(p.netuid, p);
+  });
 
   const rootPosition = walletPositions.find(p => p.netuid === 0);
   const rootInfoEl = document.getElementById('root-info');
@@ -1051,8 +1245,16 @@ function render() {
       <td>${emStr}</td>
       <td>${p.alpha_balance.toFixed(4)}</td>
       <td>${taoValueStr}</td>
+      ${(() => {
+        const pnl = calculatePnL(p.netuid);
+        if (!pnl) return '<td style="color:#ccc">—</td>';
+        if (pnl.exited) return '<td style="color:#888">Exited</td>';
+        
+        const color = pnl.pnl_tao >= 0 ? '#16a34a' : '#dc2626';
+        const sign = pnl.pnl_tao >= 0 ? '+' : '';
+        return `<td style="color:${color}">${sign}${pnl.pnl_tao.toFixed(3)} τ<br><span style="font-size:10px">${sign}${pnl.pnl_pct.toFixed(1)}%</span></td>`;
+      })()}
       <td>${actionBadge(action)}</td>
-      <td title="${coverageTip}">${renderDots(signals)}</td>
     </tr>`;
 
     if (p.validators && p.validators.length) {
@@ -1110,6 +1312,7 @@ function render() {
 
   document.getElementById('last-updated').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
   
+  renderPnLSummary();
   renderRecommendation();
   renderRiskPosition();
   renderSuggestedMove();
