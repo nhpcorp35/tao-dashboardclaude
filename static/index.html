@@ -539,10 +539,10 @@ function renderDailyPick(json) {
   }
   
   if (alreadyHeld) {
-    pickMain.innerHTML = `✅ <a href="https://taostats.io/subnet/${dailyScan.netuid}" target="_blank" rel="noopener" style="color:#fff;">SN${dailyScan.netuid} — ${name}</a> <span style="opacity:0.8;">(τ${price.toFixed(4)}, score: ${score})</span>`;
+    pickMain.innerHTML = `✅ <a href="https://taostats.io/subnet/${dailyScan.netuid}" target="_blank" rel="noopener" style="color:#fff;">SN${dailyScan.netuid} — ${name}</a> <span style="opacity:0.8;">(τ${price.toFixed(4)})</span>`;
     pickReason.textContent = `You're already positioned in today's top opportunity! ${reasonStr.charAt(0).toUpperCase() + reasonStr.slice(1)}`;
   } else {
-    pickMain.innerHTML = `<a href="https://taostats.io/subnet/${dailyScan.netuid}" target="_blank" rel="noopener" style="color:#fff;">SN${dailyScan.netuid} — ${name}</a> <span style="opacity:0.8;">(τ${price.toFixed(4)}, score: ${score})</span>`;
+    pickMain.innerHTML = `<a href="https://taostats.io/subnet/${dailyScan.netuid}" target="_blank" rel="noopener" style="color:#fff;">SN${dailyScan.netuid} — ${name}</a> <span style="opacity:0.8;">(τ${price.toFixed(4)})</span>`;
     pickReason.textContent = reasonStr.charAt(0).toUpperCase() + reasonStr.slice(1);
   }
   
